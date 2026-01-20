@@ -10,7 +10,7 @@ readme = "README.md"
 license = { text = "Proprietary" }
 requires-python = ">=3.10"
 authors = [
-    { name = "Your Name", email = "your.email@example.com" }
+    { name = "Vivek Vaish", email = "vaishvivek634@gmail.com" }
 ]
 keywords = [
     "ats",
@@ -111,9 +111,9 @@ ai-ats-cli = "src.cli:app"
 ai-ats-gui = "src.ui.main_window:main"
 
 [project.urls]
-Homepage = "https://github.com/yourusername/ai-ats"
-Documentation = "https://github.com/yourusername/ai-ats#readme"
-Repository = "https://github.com/yourusername/ai-ats"
+Homepage = "https://github.com/Vivekv634/ai-ats"
+Documentation = "https://github.com/Vivekv634/ai-ats#readme"
+Repository = "https://github.com/Vivekv634/ai-ats"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src"]
