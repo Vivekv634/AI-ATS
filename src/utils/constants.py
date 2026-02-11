@@ -131,27 +131,27 @@ FAIRNESS_THRESHOLDS: Final[dict[str, float]] = {
 # =============================================================================
 
 
-class CandidateStatus(Enum):
+class CandidateStatus(str, Enum):
     """Status of a candidate in the pipeline."""
 
-    NEW = auto()
-    SCREENING = auto()
-    SHORTLISTED = auto()
-    INTERVIEWING = auto()
-    OFFERED = auto()
-    HIRED = auto()
-    REJECTED = auto()
-    WITHDRAWN = auto()
+    NEW = "new"
+    SCREENING = "screening"
+    SHORTLISTED = "shortlisted"
+    INTERVIEWING = "interview"
+    OFFERED = "offer"
+    HIRED = "hired"
+    REJECTED = "rejected"
+    WITHDRAWN = "withdrawn"
 
 
-class JobStatus(Enum):
+class JobStatus(str, Enum):
     """Status of a job posting."""
 
-    DRAFT = auto()
-    OPEN = auto()
-    PAUSED = auto()
-    CLOSED = auto()
-    FILLED = auto()
+    DRAFT = "draft"
+    OPEN = "open"
+    PAUSED = "paused"
+    CLOSED = "closed"
+    FILLED = "filled"
 
 
 class MatchScoreLevel(Enum):

@@ -43,22 +43,34 @@ class DatabaseManager:
             return
 
         self._settings = get_settings()
-        self._db_name = self._settings.mongodb_database
+        self._db_name = self._settings.database.name
         self._uri = self._build_uri()
         self._initialized = True
 
     def _build_uri(self) -> str:
-        """Build MongoDB connection URI from settings."""
-        settings = self._settings
-        if settings.mongodb_uri:
-            return settings.mongodb_uri
+        """
+        Build MongoDB connection URI from settings.
 
-        # Build URI from components
+        Security: URL-encodes credentials to prevent injection attacks.
+        """
+        from urllib.parse import quote_plus
+
+        db_settings = self._settings.database
+
+        # Validate host to prevent injection
+        host = db_settings.host.strip()
+        if not host or any(c in host for c in [";", "&", "|", "$", "`"]):
+            raise ValueError(f"Invalid database host: {host}")
+
+        # Build URI from components with URL-encoded credentials
         auth = ""
-        if settings.mongodb_username and settings.mongodb_password:
-            auth = f"{settings.mongodb_username}:{settings.mongodb_password}@"
+        if db_settings.username and db_settings.password:
+            # URL-encode credentials to handle special characters safely
+            encoded_user = quote_plus(db_settings.username)
+            encoded_pass = quote_plus(db_settings.password)
+            auth = f"{encoded_user}:{encoded_pass}@"
 
-        return f"mongodb://{auth}{settings.mongodb_host}:{settings.mongodb_port}"
+        return f"mongodb://{auth}{host}:{db_settings.port}"
 
     # -------------------------------------------------------------------------
     # Synchronous Client
@@ -68,13 +80,18 @@ class DatabaseManager:
         """Get or create synchronous MongoDB client."""
         if self._sync_client is None:
             logger.info("Creating synchronous MongoDB client")
-            self._sync_client = MongoClient(
-                self._uri,
-                serverSelectionTimeoutMS=5000,
-                connectTimeoutMS=5000,
-                maxPoolSize=50,
-                minPoolSize=5,
-            )
+            try:
+                self._sync_client = MongoClient(
+                    self._uri,
+                    serverSelectionTimeoutMS=5000,
+                    connectTimeoutMS=5000,
+                    maxPoolSize=50,
+                    minPoolSize=5,
+                )
+            except Exception as e:
+                self._sync_client = None
+                logger.error(f"Failed to create sync client: {e}")
+                raise
         return self._sync_client
 
     def get_sync_database(self) -> Database:
@@ -102,6 +119,11 @@ class DatabaseManager:
             return True
         except (ConnectionFailure, ServerSelectionTimeoutError) as e:
             logger.error(f"Sync connection check failed: {e}")
+            self._sync_client = None
+            return False
+        except Exception as e:
+            logger.error(f"Unexpected sync connection error: {e}")
+            self._sync_client = None
             return False
 
     # -------------------------------------------------------------------------

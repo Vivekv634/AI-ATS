@@ -91,6 +91,9 @@ class ContactParser:
         "references", "available", "upon", "request",
     }
 
+    # Maximum text length to process (prevent ReDoS)
+    MAX_TEXT_LENGTH = 100_000  # 100KB
+
     def parse(self, text: str, focus_on_header: bool = True) -> ContactInfo:
         """
         Parse contact information from resume text.
@@ -101,9 +104,18 @@ class ContactParser:
 
         Returns:
             ContactInfo with extracted details
+
+        Security:
+            - Limits input text length to prevent ReDoS attacks
+            - Truncates overly long lines before regex processing
         """
         result = ContactInfo()
         raw_matches = {}
+
+        # Security: Limit input length to prevent ReDoS
+        if len(text) > self.MAX_TEXT_LENGTH:
+            logger.warning(f"Input text truncated from {len(text)} to {self.MAX_TEXT_LENGTH} chars")
+            text = text[:self.MAX_TEXT_LENGTH]
 
         # Focus on header for contact info (usually first 15-20 lines)
         if focus_on_header:

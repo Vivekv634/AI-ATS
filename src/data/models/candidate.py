@@ -243,6 +243,6 @@ class CandidateUpdate(BaseModel):
     work_experience: Optional[list[WorkExperience]] = None
     education: Optional[list[Education]] = None
     certifications: Optional[list[Certification]] = None
-    languages: Optional[Language] = None
+    languages: Optional[list[Language]] = None
     status: Optional[CandidateStatus] = None
     metadata: Optional[CandidateMetadata] = None

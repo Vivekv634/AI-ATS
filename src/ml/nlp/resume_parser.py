@@ -103,6 +103,9 @@ class ResumeParser:
         self.experience_parser = ExperienceParser()
         self.education_parser = EducationParser()
 
+    # Maximum file size to process (50MB)
+    MAX_FILE_SIZE = 50 * 1024 * 1024
+
     def parse_file(self, file_path: str | Path) -> ResumeParseResult:
         """
         Parse a resume from a file.
@@ -112,12 +115,30 @@ class ResumeParser:
 
         Returns:
             ResumeParseResult with all extracted information
+
+        Security:
+            - Validates file path to prevent traversal attacks
+            - Limits file size to prevent resource exhaustion
         """
         start_time = time.time()
         result = ResumeParseResult(file_path=str(file_path))
 
         try:
-            path = Path(file_path)
+            path = Path(file_path).resolve()
+
+            # Security: Check file exists and is not too large
+            if not path.exists():
+                result.errors.append(f"File not found: {file_path}")
+                return result
+
+            if not path.is_file():
+                result.errors.append(f"Not a file: {file_path}")
+                return result
+
+            file_size = path.stat().st_size
+            if file_size > self.MAX_FILE_SIZE:
+                result.errors.append(f"File too large: {file_size} bytes (max: {self.MAX_FILE_SIZE})")
+                return result
 
             # Calculate file hash
             with open(path, "rb") as f:
@@ -159,9 +180,18 @@ class ResumeParser:
 
         Returns:
             ResumeParseResult with all extracted information
+
+        Security:
+            - Limits content size to prevent resource exhaustion
         """
         start_time = time.time()
         result = ResumeParseResult()
+
+        # Security: Check content size
+        if len(content) > self.MAX_FILE_SIZE:
+            result.errors.append(f"Content too large: {len(content)} bytes (max: {self.MAX_FILE_SIZE})")
+            return result
+
         result.file_hash = hashlib.sha256(content).hexdigest()
 
         try:

@@ -30,12 +30,38 @@ class DatabaseSettings(BaseSettings):
     username: str | None = None
     password: str | None = None
 
+    @field_validator("host")
+    @classmethod
+    def validate_host(cls, v: str) -> str:
+        """Validate database host to prevent injection."""
+        v = v.strip()
+        # Prevent shell injection characters
+        if any(c in v for c in [";", "&", "|", "$", "`", "\n", "\r"]):
+            raise ValueError("Invalid characters in database host")
+        return v
+
+    @field_validator("name")
+    @classmethod
+    def validate_name(cls, v: str) -> str:
+        """Validate database name."""
+        v = v.strip()
+        # MongoDB database names have restrictions
+        if not v or any(c in v for c in ["/", "\\", ".", '"', "$", "\0"]):
+            raise ValueError("Invalid database name")
+        return v
+
     @property
     def connection_string(self) -> str:
         """Generate MongoDB connection string."""
+        from urllib.parse import quote_plus
         if self.username and self.password:
-            return f"mongodb://{self.username}:{self.password}@{self.host}:{self.port}"
+            # URL-encode credentials for safety
+            return f"mongodb://{quote_plus(self.username)}:{quote_plus(self.password)}@{self.host}:{self.port}"
         return f"mongodb://{self.host}:{self.port}"
+
+    def __repr__(self) -> str:
+        """Safe repr that doesn't expose password."""
+        return f"DatabaseSettings(host={self.host!r}, port={self.port}, name={self.name!r}, username={self.username!r}, password='***')"
 
 
 class VectorStoreSettings(BaseSettings):

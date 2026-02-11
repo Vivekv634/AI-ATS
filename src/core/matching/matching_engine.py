@@ -3,13 +3,14 @@ Candidate-Job matching engine.
 
 Scores and ranks candidates against job requirements using multiple
 matching strategies including skills matching, experience matching,
-education matching, and keyword matching.
+education matching, keyword matching, and semantic similarity.
 """
 
 from dataclasses import dataclass, field
 from typing import Any, Optional
 
 from src.data.models import (
+    BiasCheckResult,
     EducationMatch,
     ExperienceMatch,
     Explanation,
@@ -18,6 +19,7 @@ from src.data.models import (
     Match,
     MatchStatus,
     ScoreBreakdown,
+    SemanticMatch,
     SkillMatch,
 )
 from src.ml.nlp import ResumeParseResult, JDParseResult
@@ -48,12 +50,17 @@ class MatchResult:
     experience_score: float = 0.0
     education_score: float = 0.0
     keyword_score: float = 0.0
+    semantic_score: float = 0.0
 
     # Detailed matches
     skill_matches: list[SkillMatch] = field(default_factory=list)
     experience_match: Optional[ExperienceMatch] = None
     education_match: Optional[EducationMatch] = None
     keyword_match: Optional[KeywordMatch] = None
+    semantic_match: Optional[SemanticMatch] = None
+
+    # Bias detection
+    bias_check: Optional[BiasCheckResult] = None
 
     # Breakdown
     score_breakdown: Optional[ScoreBreakdown] = None
@@ -88,16 +95,71 @@ class MatchingEngine:
     - Experience years matching
     - Education level matching
     - Keyword/terminology matching
+    - Semantic similarity (using embeddings)
     """
 
-    def __init__(self, weights: Optional[dict[str, float]] = None):
+    def __init__(
+        self,
+        weights: Optional[dict[str, float]] = None,
+        use_semantic: bool = True,
+        use_bias_detection: bool = True,
+        use_explainability: bool = True,
+    ):
         """
         Initialize the matching engine.
 
         Args:
             weights: Optional custom scoring weights
+            use_semantic: Whether to use semantic similarity matching
+            use_bias_detection: Whether to perform bias detection
+            use_explainability: Whether to generate detailed explanations
         """
         self.weights = weights or DEFAULT_SCORING_WEIGHTS
+        self.use_semantic = use_semantic
+        self.use_bias_detection = use_bias_detection
+        self.use_explainability = use_explainability
+        self._semantic_matcher = None
+        self._bias_detector = None
+        self._explainer = None
+
+    @property
+    def semantic_matcher(self):
+        """Get the semantic matcher (lazy initialization)."""
+        if self._semantic_matcher is None and self.use_semantic:
+            try:
+                from src.ml.embeddings import get_semantic_matcher
+                self._semantic_matcher = get_semantic_matcher()
+                logger.info("Semantic matcher initialized successfully")
+            except Exception as e:
+                logger.warning(f"Could not initialize semantic matcher: {e}")
+                self.use_semantic = False
+        return self._semantic_matcher
+
+    @property
+    def bias_detector(self):
+        """Get the bias detector (lazy initialization)."""
+        if self._bias_detector is None and self.use_bias_detection:
+            try:
+                from src.ml.ethics import get_bias_detector
+                self._bias_detector = get_bias_detector()
+                logger.info("Bias detector initialized successfully")
+            except Exception as e:
+                logger.warning(f"Could not initialize bias detector: {e}")
+                self.use_bias_detection = False
+        return self._bias_detector
+
+    @property
+    def explainer(self):
+        """Get the match explainer (lazy initialization)."""
+        if self._explainer is None and self.use_explainability:
+            try:
+                from src.ml.explainability import get_match_explainer
+                self._explainer = get_match_explainer()
+                logger.info("Match explainer initialized successfully")
+            except Exception as e:
+                logger.warning(f"Could not initialize explainer: {e}")
+                self.use_explainability = False
+        return self._explainer
 
     def match(
         self,
@@ -149,6 +211,11 @@ class MatchingEngine:
             resume_result, jd_result
         )
 
+        # Calculate semantic similarity if enabled
+        result.semantic_match, result.semantic_score = self._match_semantic(
+            resume_result, jd_result
+        )
+
         # Calculate weighted overall score
         result.score_breakdown = self._calculate_breakdown(result)
         result.overall_score = result.score_breakdown.total_score
@@ -157,7 +224,34 @@ class MatchingEngine:
         # Generate explanation
         result.explanation = self._generate_explanation(result)
 
+        # Perform bias detection if enabled
+        result.bias_check = self._check_bias(resume_result, result.overall_score)
+
         return result
+
+    def _check_bias(
+        self,
+        resume: ResumeParseResult,
+        score: float,
+    ) -> Optional[BiasCheckResult]:
+        """
+        Check for potential bias in the candidate evaluation.
+
+        Args:
+            resume: Parsed resume data.
+            score: The assigned match score.
+
+        Returns:
+            BiasCheckResult if bias detection is enabled, None otherwise.
+        """
+        if not self.use_bias_detection or self.bias_detector is None:
+            return None
+
+        try:
+            return self.bias_detector.check_match_for_bias(resume, score)
+        except Exception as e:
+            logger.warning(f"Bias detection failed: {e}")
+            return None
 
     def _match_skills(
         self,
@@ -398,8 +492,33 @@ class MatchingEngine:
 
         return match, round(match.match_percentage, 3)
 
+    def _match_semantic(
+        self,
+        resume: ResumeParseResult,
+        jd: JDParseResult,
+    ) -> tuple[Optional[SemanticMatch], float]:
+        """
+        Compute semantic similarity between resume and job description.
+
+        Uses embedding-based matching to capture semantic meaning
+        beyond simple keyword matching.
+        """
+        if not self.use_semantic or self.semantic_matcher is None:
+            # Fallback to keyword score if semantic matching not available
+            return None, 0.0
+
+        try:
+            semantic_match = self.semantic_matcher.compute_similarity(resume, jd)
+            return semantic_match, round(semantic_match.overall_similarity, 3)
+        except Exception as e:
+            logger.warning(f"Semantic matching failed: {e}")
+            return None, 0.0
+
     def _calculate_breakdown(self, result: MatchResult) -> ScoreBreakdown:
         """Calculate weighted score breakdown."""
+        # Use actual semantic score if available, otherwise fallback to keyword score
+        semantic_score = result.semantic_score if result.semantic_match else result.keyword_score
+
         breakdown = ScoreBreakdown(
             skills_score=result.skills_score,
             skills_weight=self.weights["skills_match"],
@@ -413,11 +532,9 @@ class MatchingEngine:
             education_weight=self.weights["education_match"],
             education_weighted=result.education_score * self.weights["education_match"],
 
-            # Using keyword score for both semantic and keyword
-            # (semantic requires embeddings which we're not implementing here)
-            semantic_score=result.keyword_score,
+            semantic_score=semantic_score,
             semantic_weight=self.weights["semantic_similarity"],
-            semantic_weighted=result.keyword_score * self.weights["semantic_similarity"],
+            semantic_weighted=semantic_score * self.weights["semantic_similarity"],
 
             keyword_score=result.keyword_score,
             keyword_weight=self.weights["keyword_match"],
@@ -478,6 +595,33 @@ class MatchingEngine:
             else:
                 gaps.append(f"Has {edu.candidate_degree or 'no degree listed'} (required: {edu.required_degree})")
 
+        # Semantic similarity analysis
+        if result.semantic_match:
+            sem = result.semantic_match
+            if sem.overall_similarity >= 0.7:
+                strengths.append(f"High semantic match ({sem.overall_similarity:.0%}) with job description")
+                factors.append(ExplanationFactor(
+                    factor_name="Semantic Similarity",
+                    factor_type="positive",
+                    description=f"Resume content strongly aligns with job requirements",
+                    impact_score=sem.overall_similarity,
+                ))
+            elif sem.overall_similarity >= 0.5:
+                factors.append(ExplanationFactor(
+                    factor_name="Semantic Similarity",
+                    factor_type="neutral",
+                    description=f"Resume content moderately aligns with job requirements",
+                    impact_score=sem.overall_similarity,
+                ))
+            else:
+                gaps.append(f"Low semantic alignment ({sem.overall_similarity:.0%}) with job description")
+                factors.append(ExplanationFactor(
+                    factor_name="Semantic Similarity",
+                    factor_type="negative",
+                    description=f"Resume content may not fully align with job requirements",
+                    impact_score=sem.overall_similarity,
+                ))
+
         # Generate summary
         if result.overall_score >= 0.85:
             summary = f"{result.candidate_name} is an excellent match for {result.job_title}"
@@ -488,12 +632,35 @@ class MatchingEngine:
         else:
             summary = f"{result.candidate_name} may not be the best fit for {result.job_title}"
 
+        # Generate LIME and SHAP explanations if enabled
+        lime_explanation = None
+        shap_values = None
+
+        if self.use_explainability and self.explainer:
+            try:
+                detailed_explanation = self.explainer.explain(
+                    candidate_name=result.candidate_name,
+                    job_title=result.job_title,
+                    skills_score=result.skills_score,
+                    experience_score=result.experience_score,
+                    education_score=result.education_score,
+                    semantic_score=result.semantic_score,
+                    keyword_score=result.keyword_score,
+                    overall_score=result.overall_score,
+                )
+                lime_explanation = detailed_explanation.get_lime_dict()
+                shap_values = detailed_explanation.get_shap_dict()
+            except Exception as e:
+                logger.warning(f"Failed to generate detailed explanation: {e}")
+
         return Explanation(
             summary=summary,
             factors=factors,
             strengths=strengths,
             gaps=gaps,
             recommendations=recommendations,
+            lime_explanation=lime_explanation,
+            shap_values=shap_values,
         )
 
     def rank_candidates(

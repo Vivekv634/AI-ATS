@@ -28,6 +28,9 @@ def setup_logging() -> None:
     logger.remove()
 
     # Console handler with colored output
+    # Security: diagnose=False in production to prevent sensitive data leakage in stack traces
+    enable_diagnose = settings.debug and settings.environment == "development"
+
     if log_settings.console_output:
         logger.add(
             sys.stderr,
@@ -38,7 +41,7 @@ def setup_logging() -> None:
             level=log_settings.level,
             colorize=True,
             backtrace=True,
-            diagnose=settings.debug,
+            diagnose=enable_diagnose,
         )
 
     # File handler with rotation
@@ -53,7 +56,7 @@ def setup_logging() -> None:
         retention=log_settings.retention,
         compression="zip",
         backtrace=True,
-        diagnose=settings.debug,
+        diagnose=enable_diagnose,  # Security: Only in development mode
         enqueue=True,  # Thread-safe logging
     )
 
@@ -86,6 +89,27 @@ def get_logger(name: str) -> Any:
     return logger.bind(name=name)
 
 
+def _sanitize_for_logging(data: Any) -> Any:
+    """
+    Sanitize data before logging to prevent sensitive information exposure.
+
+    Redacts passwords, tokens, and other sensitive fields.
+    """
+    if isinstance(data, dict):
+        sensitive_keys = {
+            "password", "passwd", "pwd", "secret", "token", "api_key",
+            "apikey", "auth", "credential", "private_key", "access_token",
+            "refresh_token", "ssn", "social_security",
+        }
+        return {
+            k: "***REDACTED***" if any(s in k.lower() for s in sensitive_keys) else _sanitize_for_logging(v)
+            for k, v in data.items()
+        }
+    elif isinstance(data, list):
+        return [_sanitize_for_logging(item) for item in data]
+    return data
+
+
 def audit_log(
     action: str,
     details: dict[str, Any],
@@ -99,7 +123,8 @@ def audit_log(
         details: Dictionary of relevant details
         audit_type: Type of audit entry (DECISION, BIAS, OVERRIDE, ACCESS)
     """
-    logger.bind(audit_type=audit_type).info(f"{action} | {details}")
+    sanitized_details = _sanitize_for_logging(details)
+    logger.bind(audit_type=audit_type).info(f"{action} | {sanitized_details}")
 
 
 class LoggerMixin:

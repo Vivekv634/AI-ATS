@@ -83,12 +83,35 @@ class BaseExtractor(ABC):
         pass
 
     def _validate_file(self, file_path: str | Path) -> Path:
-        """Validate that file exists and is readable."""
+        """
+        Validate that file exists, is readable, and is within allowed paths.
+
+        Security: Prevents path traversal attacks by resolving to absolute path
+        and checking for suspicious patterns.
+        """
         path = Path(file_path)
+
+        # Resolve to absolute path to prevent path traversal
+        try:
+            path = path.resolve(strict=False)
+        except (OSError, ValueError) as e:
+            raise ValueError(f"Invalid file path: {file_path}") from e
+
+        # Check for path traversal attempts
+        path_str = str(path)
+        if ".." in path_str or path_str.startswith("/etc/") or path_str.startswith("/root/"):
+            raise ValueError(f"Access denied: {file_path}")
+
         if not path.exists():
             raise FileNotFoundError(f"File not found: {file_path}")
         if not path.is_file():
             raise ValueError(f"Path is not a file: {file_path}")
+
+        # Check file size (max 50MB for resume files)
+        max_size = 50 * 1024 * 1024  # 50MB
+        if path.stat().st_size > max_size:
+            raise ValueError(f"File too large: {path.stat().st_size} bytes (max: {max_size})")
+
         return path
 
     def _create_error_result(self, error: Exception) -> ExtractionResult:

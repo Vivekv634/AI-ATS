@@ -29,6 +29,14 @@ from PyQt6.QtGui import QFont, QIcon
 from src.utils.config import get_settings
 from src.utils.constants import APP_DISPLAY_NAME, VERSION
 
+# Import actual views
+from src.ui.views.dashboard_view import DashboardView
+from src.ui.views.jobs_view import JobsView
+from src.ui.views.matching_view import MatchingView
+from src.ui.views.settings_view import SettingsView
+from src.ui.views.candidates_view import CandidatesView
+from src.ui.views.analytics_view import AnalyticsView
+
 
 class SidebarButton(QPushButton):
     """Custom styled button for the sidebar navigation."""
@@ -180,25 +188,50 @@ class MainWindow(QMainWindow):
         self.content_stack = QStackedWidget()
         content_layout.addWidget(self.content_stack)
 
-        # Add placeholder views
-        views = [
-            ("Dashboard", "Overview of recruitment activities and metrics"),
-            ("Candidates", "Manage and view candidate profiles"),
-            ("Job Postings", "Create and manage job postings"),
-            ("Matching", "AI-powered candidate-job matching"),
-            ("Analytics", "Reports and insights"),
-            ("Settings", "Application configuration"),
-        ]
+        # Per-view refresh tracking: True means the view needs a refresh
+        self._view_needs_refresh: dict[int, bool] = {}
 
-        for title, desc in views:
-            view = PlaceholderView(title, desc)
-            self.content_stack.addWidget(view)
+        # Add actual views
+        # Dashboard
+        self.dashboard_view = DashboardView()
+        self.content_stack.addWidget(self.dashboard_view)
+
+        # Candidates
+        self.candidates_view = CandidatesView()
+        self.content_stack.addWidget(self.candidates_view)
+
+        # Jobs
+        self.jobs_view = JobsView()
+        self.content_stack.addWidget(self.jobs_view)
+
+        # Matching
+        self.matching_view = MatchingView()
+        self.content_stack.addWidget(self.matching_view)
+
+        # Analytics
+        self.analytics_view = AnalyticsView()
+        self.content_stack.addWidget(self.analytics_view)
+
+        # Settings
+        try:
+            self.settings_view = SettingsView()
+        except Exception:
+            self.settings_view = PlaceholderView("Settings", "Application configuration")
+        self.content_stack.addWidget(self.settings_view)
+
+        # Mark all views except dashboard as needing first refresh
+        for i in range(self.content_stack.count()):
+            self._view_needs_refresh[i] = True
+        self._view_needs_refresh[0] = False  # Dashboard refreshed at startup
 
         main_layout.addWidget(content_container)
 
         # Connect navigation buttons
         for i, btn in enumerate(self.sidebar.nav_buttons):
             btn.clicked.connect(lambda checked, idx=i: self.switch_view(idx))
+
+        # Connect dashboard quick actions to navigation
+        self.dashboard_view.navigate_to_view.connect(self.switch_view)
 
         # Apply stylesheet
         self.setStyleSheet(
@@ -209,13 +242,27 @@ class MainWindow(QMainWindow):
             """
         )
 
+        # Load initial data for dashboard
+        self.dashboard_view.refresh()
+
     def switch_view(self, index: int):
         """Switch to a different view."""
         self.content_stack.setCurrentIndex(index)
 
-        # Update button states
+        # Update sidebar button states
         for i, btn in enumerate(self.sidebar.nav_buttons):
             btn.setChecked(i == index)
+
+        # Only refresh if the view is marked as needing it (first visit or dirty)
+        if self._view_needs_refresh.get(index, False):
+            current_widget = self.content_stack.widget(index)
+            if hasattr(current_widget, "refresh"):
+                current_widget.refresh()
+            self._view_needs_refresh[index] = False
+
+    def mark_view_dirty(self, index: int):
+        """Mark a view as needing refresh on next visit."""
+        self._view_needs_refresh[index] = True
 
 
 def run_application() -> int:

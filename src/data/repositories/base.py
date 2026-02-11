@@ -5,7 +5,7 @@ All entity-specific repositories inherit from this base class.
 """
 
 from abc import ABC, abstractmethod
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Generic, Optional, TypeVar
 
 from bson import ObjectId
@@ -79,9 +79,28 @@ class BaseRepository(ABC, Generic[T]):
 
     @staticmethod
     def _to_object_id(id_value: str | ObjectId) -> ObjectId:
-        """Convert string to ObjectId if needed."""
+        """
+        Convert string to ObjectId if needed.
+
+        Security: Validates ObjectId format to prevent injection and errors.
+
+        Raises:
+            ValueError: If the id_value is not a valid ObjectId format.
+        """
         if isinstance(id_value, ObjectId):
             return id_value
+
+        # Validate ObjectId format (24 hex characters)
+        if not isinstance(id_value, str):
+            raise ValueError(f"Invalid ID type: expected str or ObjectId, got {type(id_value).__name__}")
+
+        id_value = id_value.strip()
+        if not id_value:
+            raise ValueError("ID cannot be empty")
+
+        if not ObjectId.is_valid(id_value):
+            raise ValueError(f"Invalid ObjectId format: {id_value[:50]}")
+
         return ObjectId(id_value)
 
     # -------------------------------------------------------------------------
@@ -92,8 +111,8 @@ class BaseRepository(ABC, Generic[T]):
         """Create a new document."""
         collection = self._get_sync_collection()
         document = self._to_document(model)
-        document["created_at"] = datetime.utcnow()
-        document["updated_at"] = datetime.utcnow()
+        document["created_at"] = datetime.now(timezone.utc)
+        document["updated_at"] = datetime.now(timezone.utc)
 
         result: InsertOneResult = collection.insert_one(document)
         model.id = result.inserted_id
@@ -152,7 +171,7 @@ class BaseRepository(ABC, Generic[T]):
     def update(self, id_value: str | ObjectId, update_data: dict[str, Any]) -> Optional[T]:
         """Update a document by ID."""
         collection = self._get_sync_collection()
-        update_data["updated_at"] = datetime.utcnow()
+        update_data["updated_at"] = datetime.now(timezone.utc)
 
         result: UpdateResult = collection.update_one(
             {"_id": self._to_object_id(id_value)},
@@ -168,7 +187,7 @@ class BaseRepository(ABC, Generic[T]):
         """Replace an entire document."""
         collection = self._get_sync_collection()
         document = self._to_document(model)
-        document["updated_at"] = datetime.utcnow()
+        document["updated_at"] = datetime.now(timezone.utc)
         document.pop("_id", None)  # Remove _id to avoid duplication
 
         result: UpdateResult = collection.replace_one(
@@ -212,8 +231,8 @@ class BaseRepository(ABC, Generic[T]):
         """Create a new document asynchronously."""
         collection = self._get_async_collection()
         document = self._to_document(model)
-        document["created_at"] = datetime.utcnow()
-        document["updated_at"] = datetime.utcnow()
+        document["created_at"] = datetime.now(timezone.utc)
+        document["updated_at"] = datetime.now(timezone.utc)
 
         result: InsertOneResult = await collection.insert_one(document)
         model.id = result.inserted_id
@@ -276,7 +295,7 @@ class BaseRepository(ABC, Generic[T]):
     ) -> Optional[T]:
         """Update a document by ID asynchronously."""
         collection = self._get_async_collection()
-        update_data["updated_at"] = datetime.utcnow()
+        update_data["updated_at"] = datetime.now(timezone.utc)
 
         result: UpdateResult = await collection.update_one(
             {"_id": self._to_object_id(id_value)},
@@ -292,7 +311,7 @@ class BaseRepository(ABC, Generic[T]):
         """Replace an entire document asynchronously."""
         collection = self._get_async_collection()
         document = self._to_document(model)
-        document["updated_at"] = datetime.utcnow()
+        document["updated_at"] = datetime.now(timezone.utc)
         document.pop("_id", None)
 
         result: UpdateResult = await collection.replace_one(
@@ -339,7 +358,7 @@ class BaseRepository(ABC, Generic[T]):
             return []
 
         collection = self._get_sync_collection()
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         documents = []
 
         for model in models:
@@ -362,7 +381,7 @@ class BaseRepository(ABC, Generic[T]):
             return []
 
         collection = self._get_async_collection()
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         documents = []
 
         for model in models:
