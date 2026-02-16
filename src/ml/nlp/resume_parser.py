@@ -33,10 +33,13 @@ from src.utils.logger import get_logger
 
 from .extractors import ExtractorFactory, ExtractionResult
 from .parsers import (
+    CertificationsParser,
     ContactParser,
     EducationParser,
     ExperienceParser,
+    ProjectsParser,
     SkillsParser,
+    SummaryParser,
 )
 from .preprocessor import PreprocessedText, TextPreprocessor
 
@@ -60,6 +63,10 @@ class ResumeParseResult:
     skills: list[dict[str, Any]] = field(default_factory=list)
     experience: list[dict[str, Any]] = field(default_factory=list)
     education: list[dict[str, Any]] = field(default_factory=list)
+    certifications: list[dict[str, Any]] = field(default_factory=list)
+    projects: list[dict[str, Any]] = field(default_factory=list)
+    summary: Optional[str] = None
+    languages: list[str] = field(default_factory=list)
 
     # Summary
     total_experience_years: float = 0.0
@@ -97,11 +104,19 @@ class ResumeParser:
 
     def __init__(self):
         """Initialize the resume parser with all component parsers."""
+        try:
+            import spacy
+            spacy.prefer_gpu()
+        except ImportError:
+            pass
         self.preprocessor = TextPreprocessor()
         self.contact_parser = ContactParser()
         self.skills_parser = SkillsParser()
         self.experience_parser = ExperienceParser()
         self.education_parser = EducationParser()
+        self.certifications_parser = CertificationsParser()
+        self.projects_parser = ProjectsParser(skills_parser=self.skills_parser)
+        self.summary_parser = SummaryParser()
 
     # Maximum file size to process (50MB)
     MAX_FILE_SIZE = 50 * 1024 * 1024
@@ -324,6 +339,54 @@ class ResumeParser:
         ]
         result.highest_education = education_result.highest_level
 
+        # Extract certifications
+        certifications_section = get_section("certifications")
+        if certifications_section:
+            cert_result = self.certifications_parser.parse(certifications_section)
+            result.certifications = [
+                {
+                    "name": c.name,
+                    "issuer": c.issuer,
+                    "issue_date": c.issue_date.isoformat() if c.issue_date else None,
+                    "expiry_date": c.expiry_date.isoformat() if c.expiry_date else None,
+                    "credential_id": c.credential_id,
+                    "credential_url": c.credential_url,
+                    "confidence": c.confidence,
+                }
+                for c in cert_result.certifications
+            ]
+
+        # Extract projects
+        projects_section = get_section("projects")
+        if projects_section:
+            proj_result = self.projects_parser.parse(projects_section)
+            result.projects = [
+                {
+                    "name": p.name,
+                    "description": p.description,
+                    "technologies": p.technologies,
+                    "url": p.url,
+                    "confidence": p.confidence,
+                }
+                for p in proj_result.projects
+            ]
+
+        # Extract professional summary
+        summary_section = get_section("summary")
+        if summary_section:
+            summary_result = self.summary_parser.parse(summary_section)
+            result.summary = summary_result.text or None
+
+        # Extract languages (simple split — no full parser needed for plain lists)
+        import re as _re
+        languages_section = get_section("languages")
+        if languages_section:
+            result.languages = [
+                lang.strip()
+                for lang in _re.split(r"[,;\n•\-]", languages_section)
+                if lang.strip() and 2 <= len(lang.strip()) <= 40
+            ]
+
         # Calculate overall confidence and quality
         result.overall_confidence = self._calculate_overall_confidence(result)
         result.parse_quality_score = self._calculate_quality_score(result)
@@ -333,10 +396,12 @@ class ResumeParser:
     def _calculate_overall_confidence(self, result: ResumeParseResult) -> float:
         """Calculate overall parsing confidence."""
         weights = {
-            "contact": 0.25,
-            "skills": 0.25,
-            "experience": 0.30,
-            "education": 0.20,
+            "contact": 0.23,
+            "skills": 0.23,
+            "experience": 0.28,
+            "education": 0.18,
+            "certifications": 0.04,
+            "projects": 0.04,
         }
 
         score = 0.0
@@ -359,6 +424,16 @@ class ResumeParser:
         if result.education:
             avg_edu_conf = sum(e["confidence"] for e in result.education) / len(result.education)
             score += weights["education"] * avg_edu_conf
+
+        # Certifications confidence
+        if result.certifications:
+            avg_cert_conf = sum(c["confidence"] for c in result.certifications) / len(result.certifications)
+            score += weights["certifications"] * avg_cert_conf
+
+        # Projects confidence
+        if result.projects:
+            avg_proj_conf = sum(p["confidence"] for p in result.projects) / len(result.projects)
+            score += weights["projects"] * avg_proj_conf
 
         return round(score, 2)
 
@@ -392,6 +467,14 @@ class ResumeParser:
             score += 0.15
             if result.highest_education:
                 score += 0.10
+
+        # Certifications quality bonus
+        if result.certifications:
+            score += 0.05
+
+        # Projects quality bonus
+        if result.projects:
+            score += 0.05
 
         return round(min(score, 1.0), 2)
 
@@ -505,14 +588,50 @@ class ResumeParser:
         if result.experience and result.experience[0].get("job_title"):
             headline = result.experience[0]["job_title"]
 
+        # Build certifications
+        from datetime import date as date_type
+
+        certifications = []
+        for cert in result.certifications:
+            if not cert.get("name"):
+                continue
+            issue_date = None
+            expiry_date = None
+            if cert.get("issue_date"):
+                try:
+                    issue_date = date_type.fromisoformat(cert["issue_date"])
+                except ValueError:
+                    pass
+            if cert.get("expiry_date"):
+                try:
+                    expiry_date = date_type.fromisoformat(cert["expiry_date"])
+                except ValueError:
+                    pass
+            certifications.append(
+                Certification(
+                    name=cert["name"],
+                    issuing_organization=cert.get("issuer") or "Unknown",
+                    issue_date=issue_date,
+                    expiration_date=expiry_date,
+                    credential_id=cert.get("credential_id"),
+                    credential_url=cert.get("credential_url"),
+                )
+            )
+
+        # Build languages
+        languages = [Language(language=lang) for lang in result.languages if lang]
+
         return CandidateCreate(
             first_name=first_name,
             last_name=last_name,
             contact=contact_info,
             headline=headline,
+            summary=result.summary,
             skills=skills,
             work_experience=work_experience,
             education=education,
+            certifications=certifications,
+            languages=languages,
         )
 
     def to_parsed_content(self, result: ResumeParseResult) -> ParsedContent:

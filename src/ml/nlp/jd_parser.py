@@ -110,10 +110,10 @@ class JDParser:
         ],
     }
 
-    # Patterns for experience extraction
+    # Patterns for experience extraction (range pattern before single-number to avoid shadowing)
     EXPERIENCE_PATTERNS = [
-        r"(\d+)\+?\s*(?:years?|yrs?)\s*(?:of)?\s*(?:relevant|professional|industry|work)?\s*experience",
         r"(\d+)\s*[-–]\s*(\d+)\s*(?:years?|yrs?)\s*(?:of)?\s*experience",
+        r"(\d+)\+?\s*(?:years?|yrs?)\s*(?:of)?\s*(?:relevant|professional|industry|work)?\s*experience",
         r"minimum\s*(?:of)?\s*(\d+)\s*(?:years?|yrs?)",
         r"at\s+least\s+(\d+)\s*(?:years?|yrs?)",
         r"(\d+)\s*(?:years?|yrs?)\s*(?:or\s+more|minimum)",
@@ -140,6 +140,11 @@ class JDParser:
 
     def __init__(self):
         """Initialize the JD parser."""
+        try:
+            import spacy
+            spacy.prefer_gpu()
+        except ImportError:
+            pass
         self.skills_parser = SkillsParser()
         self._build_skill_set()
 
@@ -351,15 +356,16 @@ class JDParser:
         required_skills: set[str] = set()
         preferred_skills: set[str] = set()
 
-        # Parse skills from requirements section
+        # Parse skills from requirements section (text-only, no skills_section to avoid
+        # treating bullet-point lines as skill candidates)
         if requirements_section:
-            result = self.skills_parser.parse(requirements_section, requirements_section)
+            result = self.skills_parser.parse(requirements_section)
             for skill in result.skills:
                 required_skills.add(skill.name.lower())
 
         # Parse skills from preferred section
         if preferred_section:
-            result = self.skills_parser.parse(preferred_section, preferred_section)
+            result = self.skills_parser.parse(preferred_section)
             for skill in result.skills:
                 preferred_skills.add(skill.name.lower())
 

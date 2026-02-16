@@ -174,7 +174,7 @@ class MatchScoreLevel(Enum):
         return cls.POOR
 
 
-class AuditAction(Enum):
+class AuditAction(str, Enum):
     """Types of actions that can be audited."""
 
     CANDIDATE_ADDED = "candidate_added"
