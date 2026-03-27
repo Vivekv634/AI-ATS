@@ -6,6 +6,7 @@ matching strategies including skills matching, experience matching,
 education matching, keyword matching, and semantic similarity.
 """
 
+from collections import Counter
 from dataclasses import dataclass, field
 from typing import Any, Optional
 
@@ -263,7 +264,8 @@ class MatchingEngine:
 
         # Get candidate skills (lowercase for comparison)
         candidate_skills = {
-            s["name"].lower(): s for s in resume.skills
+            s.get("name", "").lower(): s for s in resume.skills
+            if s.get("name")
         }
 
         # Get all required skills
@@ -445,11 +447,15 @@ class MatchingEngine:
         resume: ResumeParseResult,
         jd: JDParseResult,
     ) -> tuple[Optional[KeywordMatch], float]:
-        """Match keywords from JD in resume."""
-        # Extract important keywords from JD
-        jd_text = jd.raw_text.lower()
-        resume_text = ""
+        """
+        Match keywords from JD in resume, weighted by term frequency.
 
+        Keywords mentioned more often in the JD (across responsibilities and
+        qualifications) carry proportionally more weight in the final score,
+        so the score reflects how well the resume covers the *emphasized*
+        requirements rather than treating every word equally.
+        """
+        resume_text = ""
         if resume.extraction_result:
             resume_text = resume.extraction_result.text.lower()
         elif resume.preprocessed:
@@ -458,39 +464,51 @@ class MatchingEngine:
         if not resume_text:
             return None, 0.0
 
-        # Extract keywords from responsibilities and qualifications
-        keywords = set()
-        for resp in jd.responsibilities:
-            words = resp.lower().split()
-            keywords.update(w for w in words if len(w) > 3)
-        for qual in jd.qualifications:
-            words = qual.lower().split()
-            keywords.update(w for w in words if len(w) > 3)
-
         # Common stopwords to exclude
         stopwords = {
             "with", "have", "will", "that", "this", "from", "your", "they",
             "their", "what", "when", "where", "which", "would", "could",
             "should", "must", "able", "about", "experience", "work", "team",
         }
-        keywords -= stopwords
 
-        if not keywords:
+        # Count term frequency across responsibilities and qualifications.
+        # Words that appear multiple times are more heavily emphasized by the
+        # employer and therefore deserve a higher weight in the score.
+        freq: Counter[str] = Counter()
+        for resp in jd.responsibilities:
+            for word in resp.lower().split():
+                if len(word) > 3 and word not in stopwords:
+                    freq[word] += 1
+        for qual in jd.qualifications:
+            for word in qual.lower().split():
+                if len(word) > 3 and word not in stopwords:
+                    freq[word] += 1
+
+        if not freq:
             return None, 0.5
 
-        # Check matches
-        matched = [kw for kw in keywords if kw in resume_text]
-        missing = [kw for kw in keywords if kw not in resume_text]
+        total_weight = sum(freq.values())
+
+        # TF-weighted score: matched frequency / total frequency
+        matched = [kw for kw in freq if kw in resume_text]
+        missing = [kw for kw in freq if kw not in resume_text]
+
+        matched_weight = sum(freq[kw] for kw in matched)
+        tf_score = matched_weight / total_weight if total_weight > 0 else 0.0
+
+        # Present matched/missing lists ordered by frequency (most important first)
+        matched_by_freq = sorted(matched, key=lambda k: freq[k], reverse=True)
+        missing_by_freq = sorted(missing, key=lambda k: freq[k], reverse=True)
 
         match = KeywordMatch(
-            total_keywords=len(keywords),
+            total_keywords=len(freq),
             matched_keywords=len(matched),
-            match_percentage=len(matched) / len(keywords) if keywords else 0,
-            matched_terms=matched[:20],  # Limit for display
-            missing_terms=missing[:10],
+            match_percentage=tf_score,
+            matched_terms=matched_by_freq[:20],
+            missing_terms=missing_by_freq[:10],
         )
 
-        return match, round(match.match_percentage, 3)
+        return match, round(tf_score, 3)
 
     def _match_semantic(
         self,
@@ -515,30 +533,50 @@ class MatchingEngine:
             return None, 0.0
 
     def _calculate_breakdown(self, result: MatchResult) -> ScoreBreakdown:
-        """Calculate weighted score breakdown."""
-        # Use actual semantic score if available, otherwise fallback to keyword score
-        semantic_score = result.semantic_score if result.semantic_match else result.keyword_score
+        """Calculate weighted score breakdown.
+
+        When semantic matching is unavailable its weight is NOT redistributed —
+        instead keyword_score is used as a proxy for the semantic slot so that
+        the total still sums to 1.0 and the original weights are preserved.
+        """
+        if result.semantic_match is not None:
+            # Semantic matching succeeded — use all weights as configured.
+            skills_w: float = self.weights["skills_match"]
+            experience_w: float = self.weights["experience_match"]
+            education_w: float = self.weights["education_match"]
+            semantic_w: float = self.weights["semantic_similarity"]
+            keyword_w: float = self.weights["keyword_match"]
+            semantic_score: float = result.semantic_score
+        else:
+            # Semantic unavailable — keep original weights, fall back to
+            # keyword_score as the semantic proxy so the formula is unchanged.
+            skills_w = self.weights["skills_match"]
+            experience_w = self.weights["experience_match"]
+            education_w = self.weights["education_match"]
+            semantic_w = self.weights["semantic_similarity"]
+            keyword_w = self.weights["keyword_match"]
+            semantic_score = result.keyword_score   # fallback: keyword as proxy
 
         breakdown = ScoreBreakdown(
             skills_score=result.skills_score,
-            skills_weight=self.weights["skills_match"],
-            skills_weighted=result.skills_score * self.weights["skills_match"],
+            skills_weight=skills_w,
+            skills_weighted=result.skills_score * skills_w,
 
             experience_score=result.experience_score,
-            experience_weight=self.weights["experience_match"],
-            experience_weighted=result.experience_score * self.weights["experience_match"],
+            experience_weight=experience_w,
+            experience_weighted=result.experience_score * experience_w,
 
             education_score=result.education_score,
-            education_weight=self.weights["education_match"],
-            education_weighted=result.education_score * self.weights["education_match"],
+            education_weight=education_w,
+            education_weighted=result.education_score * education_w,
 
             semantic_score=semantic_score,
-            semantic_weight=self.weights["semantic_similarity"],
-            semantic_weighted=semantic_score * self.weights["semantic_similarity"],
+            semantic_weight=semantic_w,
+            semantic_weighted=semantic_score * semantic_w,
 
             keyword_score=result.keyword_score,
-            keyword_weight=self.weights["keyword_match"],
-            keyword_weighted=result.keyword_score * self.weights["keyword_match"],
+            keyword_weight=keyword_w,
+            keyword_weighted=result.keyword_score * keyword_w,
         )
 
         return breakdown
@@ -670,13 +708,27 @@ class MatchingEngine:
         """
         Rank candidates by their overall match score.
 
+        Tie-breaking order (all descending, then name ascending as last resort):
+          1. overall_score  — primary criterion
+          2. skills_score   — highest-weight component (0.35)
+          3. experience_score — second-highest component (0.25)
+          4. candidate_name — alphabetical, makes ordering fully deterministic
+
         Args:
             candidates: List of match results
 
         Returns:
             Sorted list with highest scores first
         """
-        return sorted(candidates, key=lambda x: x.overall_score, reverse=True)
+        return sorted(
+            candidates,
+            key=lambda x: (
+                -x.overall_score,
+                -x.skills_score,
+                -x.experience_score,
+                x.candidate_name,
+            ),
+        )
 
 
 # Singleton instance

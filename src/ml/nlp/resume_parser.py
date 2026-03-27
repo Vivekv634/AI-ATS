@@ -29,6 +29,7 @@ from src.data.models import (
     Skill,
     WorkExperience,
 )
+from src.utils.config import get_settings
 from src.utils.logger import get_logger
 
 from .extractors import ExtractorFactory, ExtractionResult
@@ -84,8 +85,16 @@ class ResumeParseResult:
 
     @property
     def success(self) -> bool:
-        """Check if parsing was successful."""
-        return len(self.errors) == 0 and self.overall_confidence > 0.3
+        """Check if parsing was successful.
+
+        Requires no errors AND overall_confidence at or above the configured
+        threshold (default 0.5).  The threshold is intentionally higher than
+        the old value of 0.3 so that a document with only an email address
+        does not pass — meaningful contact + at least one substantive section
+        (skills, experience, or education) must be extracted.
+        """
+        threshold = get_settings().ml.resume_success_threshold
+        return len(self.errors) == 0 and self.overall_confidence > threshold
 
 
 class ResumeParser:

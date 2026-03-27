@@ -30,6 +30,7 @@ class IngestionResult:
     candidate_name: str = ""
     candidate_email: str = ""
     file_hash: str = ""
+    embedding_id: Optional[str] = None      # set after successful embedding
     processing_time_ms: int = 0
     error_message: str = ""
     warnings: list[str] = field(default_factory=list)
@@ -156,6 +157,18 @@ class IngestionService:
             logger.error(f"DB upsert failed for {filename}: {exc}")
             result.status = "error"
             result.error_message = f"Storage error: {exc}"
+
+        # 5. Embed (non-fatal — embedding failure never blocks ingestion)
+        if result.status == "success" and result.candidate_id:
+            try:
+                from src.ml.embeddings.embedding_service import EmbeddingService
+                emb_svc: EmbeddingService = EmbeddingService(repo=self._repo)
+                result.embedding_id = emb_svc.embed_candidate(
+                    result.candidate_id, parsed
+                )
+            except Exception as exc:
+                logger.warning(f"Embedding step failed (non-fatal) for {filename}: {exc}")
+                result.warnings.append(f"Embedding unavailable: {exc}")
 
         result.processing_time_ms = int((time.monotonic() - t0) * 1000)
         return result

@@ -127,3 +127,31 @@ class TestDriveIngestion:
     def test_google_drive_service_has_ingest_folder(self):
         from src.services.google_drive_service import GoogleDriveService
         assert hasattr(GoogleDriveService, "ingest_folder")
+
+
+class TestIngestionEmbedding:
+    def test_result_has_embedding_id_field(self) -> None:
+        svc: IngestionService = _make_service()
+        result: IngestionResult = svc.ingest_file(VIVEK_PDF)
+        assert hasattr(result, "embedding_id")
+
+    def test_embedding_failure_does_not_break_ingestion(self) -> None:
+        """EmbeddingService raising should not change status to error."""
+        from unittest.mock import patch
+        svc: IngestionService = _make_service()
+        with patch(
+            "src.ml.embeddings.embedding_service.EmbeddingService.embed_candidate",
+            side_effect=RuntimeError("GPU unavailable"),
+        ):
+            result: IngestionResult = svc.ingest_file(VIVEK_PDF)
+        assert result.status == "success"
+
+    def test_embedding_warning_added_on_failure(self) -> None:
+        from unittest.mock import patch
+        svc: IngestionService = _make_service()
+        with patch(
+            "src.ml.embeddings.embedding_service.EmbeddingService.embed_candidate",
+            side_effect=RuntimeError("GPU unavailable"),
+        ):
+            result: IngestionResult = svc.ingest_file(VIVEK_PDF)
+        assert any("embedding" in w.lower() for w in result.warnings)

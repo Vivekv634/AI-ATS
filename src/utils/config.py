@@ -95,6 +95,11 @@ class MLSettings(BaseSettings):
     # Model paths
     models_directory: Path = DATA_DIR / "models"
 
+    # Minimum overall_confidence for a ResumeParseResult to be considered
+    # successful.  0.3 was the original value; 0.5 requires at least contact
+    # info + skills or experience to be extracted before a parse is accepted.
+    resume_success_threshold: float = 0.3
+
     @field_validator("device")
     @classmethod
     def validate_device(cls, v: str) -> str:

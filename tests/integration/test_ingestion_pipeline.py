@@ -133,3 +133,33 @@ class TestBatchIngestion:
                     f"Hash collision on: {pdf.name}"
                 )
                 seen_hashes.add(result.file_hash)
+
+
+# ---------------------------------------------------------------------------
+# Embedding text-building integration
+# ---------------------------------------------------------------------------
+
+class TestEmbeddingTextBuilding:
+    """Verifies _build_text against real parsed PDFs. No model needed."""
+
+    def test_vivek_text_contains_python(self) -> None:
+        from src.ml.embeddings.embedding_service import EmbeddingService
+        from src.ml.nlp.accurate_resume_parser import AccurateResumeParser, ParsedResume
+
+        parser: AccurateResumeParser = AccurateResumeParser()
+        parsed: ParsedResume = parser.parse(RESUMES_DIR / "vivek_resume.pdf")
+        svc: EmbeddingService = EmbeddingService(model=None, store=None, repo=None)  # type: ignore[arg-type]
+        text: str = svc._build_text(parsed)
+        assert "python" in text.lower()
+        assert len(text) > 100
+
+    def test_all_pdfs_produce_non_empty_text(self) -> None:
+        from src.ml.embeddings.embedding_service import EmbeddingService
+        from src.ml.nlp.accurate_resume_parser import AccurateResumeParser, ParsedResume
+
+        parser: AccurateResumeParser = AccurateResumeParser()
+        svc: EmbeddingService = EmbeddingService(model=None, store=None, repo=None)  # type: ignore[arg-type]
+        for pdf in ALL_PDFS:
+            parsed: ParsedResume = parser.parse(pdf)
+            text: str = svc._build_text(parsed)
+            assert len(text) > 0, f"{pdf.name}: _build_text returned empty string"
