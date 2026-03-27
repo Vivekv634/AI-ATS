@@ -45,6 +45,14 @@ class Skill(EmbeddedModel):
         """Normalize skill names to lowercase for consistency."""
         return v.strip().lower()
 
+    def __hash__(self) -> int:
+        return hash(self.name)
+
+    def __eq__(self, other: object) -> bool:
+        if not isinstance(other, Skill):
+            return NotImplemented
+        return self.name == other.name
+
 
 class WorkExperience(EmbeddedModel):
     """Represents a single work experience entry."""
@@ -163,6 +171,9 @@ class Candidate(BaseDocument):
 
     # Vector embedding for semantic search (stored separately in vector DB)
     embedding_id: Optional[str] = None
+
+    # Deduplication — SHA-256 hashes of every resume file ingested for this candidate
+    file_hashes: list[str] = Field(default_factory=list)
 
     @property
     def full_name(self) -> str:

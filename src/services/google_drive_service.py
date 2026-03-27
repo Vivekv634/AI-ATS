@@ -13,11 +13,16 @@ Setup Instructions:
 6. Run this service - it will prompt for authorization on first run
 """
 
+from __future__ import annotations
+
 import io
 import os
 from pathlib import Path
-from typing import Optional
+from typing import Optional, TYPE_CHECKING
 from dataclasses import dataclass, field
+
+if TYPE_CHECKING:
+    from src.services.ingestion_service import CandidateRepoProtocol
 
 from src.utils.logger import get_logger
 from src.utils.config import DATA_DIR
@@ -75,7 +80,7 @@ class GoogleDriveService:
         "text/plain",
     ]
 
-    def __init__(self):
+    def __init__(self) -> None:
         """Initialize the Google Drive service."""
         self._service = None
         self._authenticated = False
@@ -124,6 +129,7 @@ class GoogleDriveService:
         try:
             from google.oauth2.credentials import Credentials
             from google.auth.transport.requests import Request
+            from google.auth.exceptions import RefreshError, TransportError
             from google_auth_oauthlib.flow import InstalledAppFlow
             from googleapiclient.discovery import build
 
@@ -138,8 +144,29 @@ class GoogleDriveService:
             # Refresh or get new credentials
             if not creds or not creds.valid:
                 if creds and creds.expired and creds.refresh_token:
-                    creds.refresh(Request())
-                else:
+                    try:
+                        creds.refresh(Request())
+                    except RefreshError:
+                        # Refresh token has expired or been revoked (e.g. user
+                        # removed app access in Google account settings).  The
+                        # stale token file must be deleted so the next branch
+                        # runs the full OAuth flow instead of looping forever.
+                        logger.warning(
+                            "Google OAuth refresh token is invalid or has been "
+                            "revoked. Deleting stale token and re-authenticating "
+                            "via browser."
+                        )
+                        TOKEN_FILE.unlink(missing_ok=True)
+                        creds = None
+                    except TransportError as e:
+                        logger.error(
+                            f"Network error while refreshing Google token: {e}. "
+                            "Check your internet connection and try again."
+                        )
+                        return False
+
+                if not creds or not creds.valid:
+                    # Either never authenticated, or refresh failed above.
                     flow = InstalledAppFlow.from_client_secrets_file(
                         str(CREDENTIALS_FILE), SCOPES
                     )
@@ -382,6 +409,43 @@ class GoogleDriveService:
         )
         return result
 
+    def export_sheet_as_csv(self, file_id: str) -> Optional[str]:
+        """
+        Export a Google Sheet as CSV text.
+
+        Uses the Drive API files.export endpoint, so no Sheets API or
+        additional OAuth scope is needed beyond the existing drive.readonly scope.
+
+        Args:
+            file_id: The Google Drive file ID of the Sheet (same as the
+                     SHEET_ID portion of the spreadsheet URL).
+
+        Returns:
+            CSV content as a UTF-8 string, or None if the export failed.
+        """
+        if not self.is_authenticated():
+            logger.error("Not authenticated. Call authenticate() first.")
+            return None
+
+        try:
+            from googleapiclient.http import MediaIoBaseDownload
+
+            request = self._service.files().export_media(
+                fileId=file_id,
+                mimeType="text/csv",
+            )
+            buffer = io.BytesIO()
+            downloader = MediaIoBaseDownload(buffer, request)
+            done = False
+            while not done:
+                _, done = downloader.next_chunk()
+
+            return buffer.getvalue().decode("utf-8")
+
+        except Exception as e:
+            logger.error(f"Failed to export sheet {file_id} as CSV: {e}")
+            return None
+
     def get_forms_response_folder(self, form_name: str) -> Optional[str]:
         """
         Find the folder containing responses for a Google Form.
@@ -420,6 +484,50 @@ class GoogleDriveService:
         except Exception as e:
             logger.error(f"Failed to find form folder: {e}")
             return None
+
+
+    def ingest_folder(
+        self,
+        folder_id: str,
+        repo: "Optional[CandidateRepoProtocol]" = None,
+    ) -> ImportResult:
+        """
+        Download every resume in a Drive folder and ingest each one via IngestionService.
+
+        Files are passed as raw bytes — nothing is written to disk.
+        Returns an ImportResult with per-file outcome counts.
+
+        Args:
+            folder_id: Google Drive folder ID to scan for resume files.
+            repo: Optional repository override (used in tests to inject a fake).
+        """
+        from src.services.ingestion_service import IngestionService, IngestionResult
+
+        svc: IngestionService = IngestionService(repo=repo)
+        result: ImportResult = ImportResult()
+
+        files: list[DriveFile] = self.list_resume_files(folder_id)
+        result.total_found = len(files)
+        result.files = files
+
+        for f in files:
+            content: Optional[bytes] = self.download_file_to_bytes(f.id)
+            if content is None:
+                result.failed += 1
+                result.errors.append(f"Download failed: {f.name}")
+                continue
+
+            ingestion: IngestionResult = svc.ingest_bytes(content, f.name)
+
+            if ingestion.status == "success":
+                result.downloaded += 1
+            elif ingestion.status == "duplicate":
+                result.skipped += 1
+            else:
+                result.failed += 1
+                result.errors.append(f"{f.name}: {ingestion.error_message}")
+
+        return result
 
 
 # Singleton instance

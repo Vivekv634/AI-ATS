@@ -561,3 +561,14 @@ class TestAuditHelperFunctions:
         assert result.bias_audit is not None
         assert result.bias_audit.affected_candidates == 15
         assert result.compliance_relevant is True
+
+
+def test_candidate_has_file_hashes_field():
+    from src.data.models.candidate import Candidate, ContactInfo
+    c = Candidate(
+        first_name="A",
+        last_name="B",
+        contact=ContactInfo(email="a@b.com"),
+    )
+    assert hasattr(c, "file_hashes")
+    assert isinstance(c.file_hashes, list)

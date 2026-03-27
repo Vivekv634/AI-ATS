@@ -71,67 +71,45 @@ class ImportWorker(QThread):
     file_processed = pyqtSignal(dict)  # result dict
     finished = pyqtSignal(int, int)  # success_count, error_count
 
-    def __init__(self, file_paths: list[str], parent=None):
+    def __init__(self, file_paths: list[str], parent: object = None) -> None:
         super().__init__(parent)
         self.file_paths = file_paths
-        self._cancelled = False
+        self._cancelled: bool = False
 
-    def cancel(self):
+    def cancel(self) -> None:
         self._cancelled = True
 
-    def run(self):
-        """Process files in background."""
-        success_count = 0
-        error_count = 0
+    def run(self) -> None:
+        """Process files in background via IngestionService."""
+        from src.services.ingestion_service import IngestionService, IngestionResult
 
-        try:
-            from src.ml.nlp import get_resume_parser
-            parser = get_resume_parser()
-        except ImportError:
-            self.finished.emit(0, len(self.file_paths))
-            return
+        svc: IngestionService = IngestionService()
+        total: int = len(self.file_paths)
+        success_count: int = 0
+        error_count: int = 0
 
         for i, file_path in enumerate(self.file_paths):
             if self._cancelled:
                 break
 
-            self.progress.emit(i + 1, len(self.file_paths), Path(file_path).name)
+            self.progress.emit(i, total, f"Processing: {Path(file_path).name}")
 
-            try:
-                result = parser.parse_file(file_path)
+            result: IngestionResult = svc.ingest_file(file_path)
 
-                if result.success and result.contact:
-                    candidate_data = {
-                        "success": True,
-                        "file_path": file_path,
-                        "file_name": Path(file_path).name,
-                        "first_name": result.contact.get("first_name") or "Unknown",
-                        "last_name": result.contact.get("last_name") or "Candidate",
-                        "email": result.contact.get("email") or "",
-                        "phone": result.contact.get("phone") or "",
-                        "skills": [s.get("name", "") for s in result.skills[:10]],
-                        "experience_years": result.total_experience_years,
-                        "education": result.education[0].get("degree") if result.education else "",
-                    }
-                    self.file_processed.emit(candidate_data)
-                    success_count += 1
-                else:
-                    self.file_processed.emit({
-                        "success": False,
-                        "file_path": file_path,
-                        "file_name": Path(file_path).name,
-                        "error": "Parsing failed - insufficient data extracted",
-                    })
-                    error_count += 1
-
-            except Exception as e:
-                self.file_processed.emit({
-                    "success": False,
-                    "file_path": file_path,
-                    "file_name": Path(file_path).name,
-                    "error": str(e)[:100],
-                })
+            if result.status == "success":
+                success_count += 1
+            elif result.status != "duplicate":
                 error_count += 1
+
+            self.file_processed.emit({
+                "file_path": file_path,
+                "file_name": Path(file_path).name,
+                "status": result.status,
+                "candidate_name": result.candidate_name,
+                "candidate_email": result.candidate_email,
+                "error_message": result.error_message,
+                "processing_time_ms": result.processing_time_ms,
+            })
 
         self.finished.emit(success_count, error_count)
 
@@ -922,13 +900,12 @@ class GoogleSheetsTab(QWidget):
         self._sheet_data = []
 
     def _fetch_sheet_data(self):
-        """Fetch data from Google Sheets."""
+        """Fetch data from Google Sheets via the Drive API CSV export endpoint."""
         url = self.sheet_url_input.text().strip()
         if not url:
             QMessageBox.warning(self, "Input Required", "Please enter the Google Sheets URL.")
             return
 
-        # Extract sheet ID from URL
         import re
         match = re.search(r'/spreadsheets/d/([a-zA-Z0-9-_]+)', url)
         if not match:
@@ -951,19 +928,63 @@ class GoogleSheetsTab(QWidget):
                     QMessageBox.warning(self, "Auth Required", "Please connect to Google Drive first.")
                     return
 
-            # Note: This requires Google Sheets API, showing placeholder
+            csv_content = service.export_sheet_as_csv(sheet_id)
+            if csv_content is None:
+                QMessageBox.critical(
+                    self,
+                    "Export Failed",
+                    "Could not export the sheet. Make sure:\n"
+                    "• The URL points to a Google Sheet (not a CSV/Excel file)\n"
+                    "• You have at least read access to this sheet"
+                )
+                return
+
+            import csv
+            rows = list(csv.reader(csv_content.splitlines()))
+
+            if not rows:
+                QMessageBox.information(self, "Empty Sheet", "The sheet has no data.")
+                return
+
+            headers = rows[0]
+            data_rows = rows[1:]
+
+            # Populate preview table (cap at 50 rows for performance)
+            preview_rows = data_rows[:50]
+            self.preview_table.setColumnCount(len(headers))
+            self.preview_table.setHorizontalHeaderLabels(headers)
+            self.preview_table.setRowCount(len(preview_rows))
+
+            for row_idx, row in enumerate(preview_rows):
+                for col_idx, cell in enumerate(row[:len(headers)]):
+                    self.preview_table.setItem(
+                        row_idx, col_idx, QTableWidgetItem(cell)
+                    )
+
+            self.preview_table.resizeColumnsToContents()
+
+            # Build structured data using column-letter mapping from the UI inputs
+            self._sheet_data = []
+            for row in data_rows:
+                entry = {}
+                for field_key, input_widget in self.column_inputs.items():
+                    col_letter = input_widget.text().strip().upper()
+                    if len(col_letter) == 1 and col_letter.isalpha():
+                        col_idx = ord(col_letter) - ord('A')
+                        entry[field_key] = row[col_idx] if col_idx < len(row) else ""
+                self._sheet_data.append(entry)
+
+            self.import_meta_btn.setEnabled(len(self._sheet_data) > 0)
             QMessageBox.information(
                 self,
-                "Feature Note",
-                f"Sheet ID: {sheet_id}\n\n"
-                "To fully implement Google Sheets reading, you need to:\n"
-                "1. Enable Google Sheets API in Cloud Console\n"
-                "2. Install: pip install gspread\n\n"
-                "For now, you can export the sheet as CSV and import locally."
+                "Data Loaded",
+                f"Loaded {len(data_rows)} row(s) from the sheet.\n"
+                "Click 'Import Metadata' to update matching candidates."
             )
 
         except Exception as e:
-            QMessageBox.critical(self, "Error", f"Failed to fetch data: {e}")
+            logger.error(f"Failed to fetch Google Sheet: {e}")
+            QMessageBox.critical(self, "Error", f"Failed to fetch sheet data: {e}")
 
     def _import_metadata(self):
         """Import metadata to update candidates."""
@@ -1156,8 +1177,8 @@ class ImportCenterDialog(QDialog):
         self.progress_bar.setValue(current)
         self.progress_label.setText(f"Processing ({current}/{total}): {message}")
 
-    def _on_file_processed(self, result: dict):
-        if result.get("success"):
+    def _on_file_processed(self, result: dict) -> None:
+        if result.get("status") == "success":
             self._imported_candidates.append(result)
 
     def _on_import_finished(self, success_count: int, error_count: int):
@@ -1177,9 +1198,45 @@ class ImportCenterDialog(QDialog):
             )
 
     def _handle_metadata(self, metadata: list):
-        """Handle metadata imported from Google Sheets."""
-        # This would merge metadata with existing candidates
-        pass
+        """Match sheet metadata to existing candidates by email and update their tags."""
+        if not metadata:
+            return
+
+        try:
+            from src.data.repositories.candidate_repository import get_candidate_repository
+            repo = get_candidate_repository()
+            updated = 0
+
+            for row in metadata:
+                email = row.get("email_col", "").strip().lower()
+                if not email:
+                    continue
+
+                candidate = repo.get_by_email(email)
+                if not candidate:
+                    continue
+
+                new_tags = []
+                if row.get("roll_col", "").strip():
+                    new_tags.append(f"roll:{row['roll_col'].strip()}")
+                if row.get("branch_col", "").strip():
+                    new_tags.append(f"dept:{row['branch_col'].strip()}")
+
+                if new_tags:
+                    existing_tags = candidate.metadata.tags if candidate.metadata else []
+                    merged_tags = list(set(existing_tags + new_tags))
+                    repo.update(candidate.id, {"metadata.tags": merged_tags})
+                    updated += 1
+
+            QMessageBox.information(
+                self,
+                "Metadata Imported",
+                f"Updated metadata for {updated} candidate(s) matched by email."
+            )
+
+        except Exception as e:
+            logger.error(f"Metadata import error: {e}")
+            QMessageBox.critical(self, "Error", f"Failed to update candidates: {e}")
 
     def _finish_import(self):
         """Finish import and emit results."""
