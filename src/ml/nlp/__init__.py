@@ -54,6 +54,12 @@ from .jd_parser import (
     get_jd_parser,
 )
 
+from .accurate_jd_parser import (
+    AccurateJDParser,
+    ParsedJob,
+    get_accurate_jd_parser,
+)
+
 __all__ = [
     # Main parser
     "ResumeParser",
@@ -85,4 +91,8 @@ __all__ = [
     "JDParser",
     "JDParseResult",
     "get_jd_parser",
+    # Accurate JD Parser
+    "AccurateJDParser",
+    "ParsedJob",
+    "get_accurate_jd_parser",
 ]

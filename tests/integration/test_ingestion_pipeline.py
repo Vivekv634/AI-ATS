@@ -256,3 +256,93 @@ class TestJobEmbeddingIntegration:
         assert result.overall_score > 0.0
         assert "vivek" in result.candidate_name.lower()
         assert result.score_breakdown is not None
+
+
+# ---------------------------------------------------------------------------
+# AccurateJDParser integration
+# ---------------------------------------------------------------------------
+
+_REAL_JD_TEXT: str = """
+Python Backend Engineer
+TechStart Ltd | Bangalore, India | Full-time | Hybrid
+
+About the Role
+We are building an AI-powered hiring platform and need a skilled backend engineer.
+
+Responsibilities
+• Design and implement REST APIs using Python and FastAPI
+• Maintain PostgreSQL and MongoDB databases
+• Write comprehensive unit and integration tests
+
+Requirements
+• 4+ years of Python development experience
+• Strong knowledge of SQL (PostgreSQL) and NoSQL (MongoDB) databases
+• Experience with Docker, Kubernetes, and AWS
+• Bachelor's degree in Computer Science or related field
+
+Nice to Have
+• Experience with machine learning frameworks (scikit-learn, PyTorch)
+• Knowledge of message queues (Kafka, RabbitMQ)
+
+Benefits
+• Competitive salary
+• Health insurance for family
+• Flexible work hours
+
+About Us
+TechStart Ltd is an AI startup focused on transforming recruitment with machine learning.
+"""
+
+
+class TestAccurateJDParserIntegration:
+    """Integration tests for AccurateJDParser using real JD text."""
+
+    def test_parse_returns_non_empty_title(self) -> None:
+        from src.ml.nlp.accurate_jd_parser import AccurateJDParser, ParsedJob
+        parser: AccurateJDParser = AccurateJDParser()
+        result: ParsedJob = parser.parse(_REAL_JD_TEXT)
+        assert result.title != ""
+        assert len(result.title) > 3
+
+    def test_parse_to_job_create_produces_valid_job_create(self) -> None:
+        from src.ml.nlp.accurate_jd_parser import AccurateJDParser, ParsedJob
+        from src.data.models.job import JobCreate
+        parser: AccurateJDParser = AccurateJDParser()
+        result: ParsedJob = parser.parse(_REAL_JD_TEXT)
+        jc: JobCreate = result.to_job_create()
+        assert isinstance(jc, JobCreate)
+        assert len(jc.title) >= 1
+        assert len(jc.description) >= 10
+        assert len(jc.skill_requirements) > 0
+
+    def test_parse_jd_then_match_against_vivek_resume(self) -> None:
+        """Full pipeline: AccurateJDParser → Job → AccurateResumeParser → match_from_parsed."""
+        from src.ml.nlp.accurate_jd_parser import AccurateJDParser, ParsedJob
+        from src.ml.nlp.accurate_resume_parser import AccurateResumeParser
+        from src.data.models.job import Job, SkillRequirement
+        from src.core.matching.matching_engine import MatchingEngine, MatchResult
+
+        jd_parser: AccurateJDParser = AccurateJDParser()
+        parsed_jd: ParsedJob = jd_parser.parse(_REAL_JD_TEXT)
+
+        job: Job = Job(
+            title=parsed_jd.title or "Python Backend Engineer",
+            description=parsed_jd.description or _REAL_JD_TEXT[:300],
+            responsibilities=parsed_jd.responsibilities,
+            company_name=parsed_jd.company_name or "TechStart",
+            skill_requirements=(
+                [SkillRequirement(name=s, is_required=True) for s in parsed_jd.required_skills]
+                + [SkillRequirement(name=s, is_required=False) for s in parsed_jd.preferred_skills]
+            ),
+        )
+
+        resume_parser: AccurateResumeParser = AccurateResumeParser()
+        parsed_resume = resume_parser.parse(RESUMES_DIR / "vivek_resume.pdf")
+
+        engine: MatchingEngine = MatchingEngine(use_semantic=False)
+        result: MatchResult = engine.match_from_parsed(parsed_resume, job)
+
+        assert result.overall_score >= 0.0
+        assert result.candidate_name != ""
+        assert result.score_breakdown is not None
+        assert result.job_title == (parsed_jd.title or "Python Backend Engineer")

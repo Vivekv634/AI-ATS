@@ -54,58 +54,82 @@ class MatchingWorker(QObject):
         self._is_cancelled = True
 
     def run(self):
-        """Run the matching process."""
+        """Run the matching process using AccurateJDParser + match_from_parsed pipeline."""
         try:
-            from src.ml.nlp import get_resume_parser, get_jd_parser
+            from src.ml.nlp.accurate_jd_parser import AccurateJDParser
+            from src.ml.nlp.accurate_resume_parser import AccurateResumeParser
             from src.core.matching import get_matching_engine
+            from src.data.models.job import Job, SkillRequirement
 
-            results = []
-            total = len(self.resume_files)
+            results: list[dict] = []
+            total: int = len(self.resume_files)
 
-            # Initialize components
+            # ── Initialise ──────────────────────────────────────────────────
             self.progress.emit(5, "Initializing matching engine...")
-            resume_parser = get_resume_parser()
-            jd_parser = get_jd_parser()
+            jd_parser: AccurateJDParser = AccurateJDParser()
+            resume_parser: AccurateResumeParser = AccurateResumeParser()
             matching_engine = get_matching_engine()
 
-            # Parse job description
+            # ── Parse job description ────────────────────────────────────────
             self.progress.emit(10, "Parsing job description...")
-            jd_result = jd_parser.parse_text(self.job_data.get("description", ""))
-            jd_result.title = self.job_data.get("title", "")
-            jd_result.company_name = self.job_data.get("company", "")
+            jd_text: str = self.job_data.get("description", "")
+            parsed_jd = jd_parser.parse(jd_text)
 
-            # Add skills from job data
-            skills_str = self.job_data.get("required_skills", "")
-            if skills_str:
-                jd_result.required_skills = [s.strip() for s in skills_str.split(",")]
+            # Override with explicit form-field values when provided
+            if self.job_data.get("title"):
+                parsed_jd.title = self.job_data["title"]
+            if self.job_data.get("company"):
+                parsed_jd.company_name = self.job_data["company"]
+            extra_skills_str: str = self.job_data.get("required_skills", "")
+            if extra_skills_str:
+                extra: list[str] = [s.strip().lower() for s in extra_skills_str.split(",") if s.strip()]
+                existing: set[str] = set(parsed_jd.required_skills)
+                parsed_jd.required_skills = parsed_jd.required_skills + [s for s in extra if s not in existing]
 
-            # Process each resume
+            # Build a Job model for matching (no DB — purely in-memory)
+            description_text: str = (
+                parsed_jd.description
+                or jd_text[:500]
+                or "No description provided."
+            )
+            if len(description_text) < 10:
+                description_text = description_text.ljust(10)
+
+            job_for_matching: Job = Job(
+                title=parsed_jd.title or "Untitled Position",
+                description=description_text,
+                responsibilities=parsed_jd.responsibilities,
+                company_name=parsed_jd.company_name or "Unknown Company",
+                skill_requirements=(
+                    [SkillRequirement(name=s, is_required=True) for s in parsed_jd.required_skills]
+                    + [SkillRequirement(name=s, is_required=False) for s in parsed_jd.preferred_skills]
+                ),
+            )
+
+            # ── Process each resume ──────────────────────────────────────────
             for i, resume_file in enumerate(self.resume_files):
                 if self._is_cancelled:
                     return
 
-                progress_pct = 15 + int((i / total) * 80)
+                progress_pct: int = 15 + int((i / total) * 80)
                 self.progress.emit(progress_pct, f"Processing resume {i+1}/{total}...")
 
                 try:
-                    # Parse resume
-                    resume_result = resume_parser.parse_file(resume_file)
+                    parsed = resume_parser.parse(resume_file)
 
-                    if not resume_result.success:
-                        continue
+                    # Run matching via new typed pipeline
+                    match_result = matching_engine.match_from_parsed(parsed, job_for_matching)
 
-                    # Run matching
-                    match_result = matching_engine.match(resume_result, jd_result)
+                    # Candidate name
+                    name: str = parsed.contact.name or "Unknown Candidate"
 
-                    # Extract candidate name
-                    contact = resume_result.contact or {}
-                    name = contact.get("full_name") or f"{contact.get('first_name', 'Unknown')} {contact.get('last_name', 'Candidate')}"
+                    # Score level
+                    score_level: str = (
+                        match_result.score_level.value if match_result.score_level else "fair"
+                    )
 
-                    # Get match level
-                    score_level = match_result.score_level.value if match_result.score_level else "fair"
-
-                    # Build explanation text
-                    explanation_parts = []
+                    # Explanation text
+                    explanation_parts: list[str] = []
                     if match_result.explanation:
                         if match_result.explanation.summary:
                             explanation_parts.append(match_result.explanation.summary)
@@ -118,33 +142,41 @@ class MatchingWorker(QObject):
                             for g in match_result.explanation.gaps[:3]:
                                 explanation_parts.append(f"• {g}")
 
-                    # Check bias
-                    bias_detected = False
-                    bias_info = ""
+                    # Bias check
+                    bias_detected: bool = False
+                    bias_info: str = ""
                     if match_result.bias_check:
                         bias_detected = match_result.bias_check.potential_bias_detected
                         if bias_detected and match_result.bias_check.protected_attributes_found:
-                            bias_info = f"Potential bias indicators: {', '.join(match_result.bias_check.protected_attributes_found)}"
+                            bias_info = (
+                                f"Potential bias indicators: "
+                                f"{', '.join(match_result.bias_check.protected_attributes_found)}"
+                            )
 
                     results.append({
                         "candidate": name,
-                        "email": contact.get("email", ""),
+                        "email": parsed.contact.email or "",
                         "score": match_result.overall_score,
                         "score_display": f"{match_result.overall_score:.0%}",
                         "match_level": score_level.capitalize(),
-                        "skills_match": f"{len(match_result.matched_skills)}/{len(match_result.skill_matches)}" if match_result.skill_matches else "N/A",
+                        "skills_match": (
+                            f"{len(match_result.matched_skills)}/{len(match_result.skill_matches)}"
+                            if match_result.skill_matches else "N/A"
+                        ),
                         "skills_score": match_result.skills_score or 0,
                         "experience_score": match_result.experience_score or 0,
                         "education_score": match_result.education_score or 0,
                         "semantic_score": match_result.semantic_score or 0,
-                        "explanation": "\n".join(explanation_parts) if explanation_parts else "No detailed explanation available.",
+                        "explanation": (
+                            "\n".join(explanation_parts)
+                            if explanation_parts else "No detailed explanation available."
+                        ),
                         "bias_detected": bias_detected,
                         "bias_info": bias_info,
                         "file_path": resume_file,
                     })
 
                 except Exception as e:
-                    # Log but continue with other resumes
                     print(f"Error processing {resume_file}: {e}")
                     continue
 
@@ -560,6 +592,7 @@ class MatchingView(BaseView):
         self._worker.error.connect(self._on_matching_error)
         self._worker.finished.connect(self._worker_thread.quit)
         self._worker.error.connect(self._worker_thread.quit)
+        self._worker_thread.finished.connect(self._on_thread_finished)
 
         # Start
         self._worker_thread.start()
@@ -578,6 +611,11 @@ class MatchingView(BaseView):
 
         self._results = results
         self._display_results(results)
+
+    def _on_thread_finished(self):
+        """Release worker and thread references once the thread has stopped."""
+        self._worker = None
+        self._worker_thread = None
 
     def _on_matching_error(self, error_message: str):
         """Handle matching error."""
