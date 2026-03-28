@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING, Any, Optional
 if TYPE_CHECKING:
     from src.ml.nlp.accurate_resume_parser import ParsedResume as ParsedResumeType
     from src.data.models.job import Job as JobType
+    from src.core.matching.skill_scorer import EmbeddingSkillScorer as EmbeddingSkillScorerType
 
 from src.data.models import (
     BiasCheckResult,
@@ -156,6 +157,8 @@ class MatchingEngine:
         self._semantic_matcher = None
         self._bias_detector = None
         self._explainer = None
+        self._skill_scorer: Optional["EmbeddingSkillScorerType"] = None
+        self._use_embedding_skill_scorer: bool = True
 
     @property
     def semantic_matcher(self):
@@ -195,6 +198,19 @@ class MatchingEngine:
                 logger.warning(f"Could not initialize explainer: {e}")
                 self.use_explainability = False
         return self._explainer
+
+    @property
+    def skill_scorer(self) -> Optional["EmbeddingSkillScorerType"]:
+        """Get the embedding skill scorer (lazy initialization)."""
+        if self._skill_scorer is None and self._use_embedding_skill_scorer:
+            try:
+                from src.core.matching.skill_scorer import EmbeddingSkillScorer
+                self._skill_scorer = EmbeddingSkillScorer()
+                logger.info("EmbeddingSkillScorer initialized successfully")
+            except Exception as exc:
+                logger.warning(f"Could not initialize EmbeddingSkillScorer: {exc}")
+                self._use_embedding_skill_scorer = False
+        return self._skill_scorer
 
     def match(
         self,
@@ -345,7 +361,15 @@ class MatchingEngine:
         result.candidate_name = parsed.contact.name or "Unknown Candidate"
         result.job_title = job.title
 
-        result.skill_matches, result.skills_score = self._match_skills(resume_shim, jd_shim)
+        # Skills: use EmbeddingSkillScorer for alias/variant matching when available
+        emb_skill_matches: list[SkillMatch] | None
+        emb_skills_score: float
+        emb_skill_matches, emb_skills_score = self._match_skills_from_parsed(parsed, job)
+        if emb_skill_matches is not None:
+            result.skill_matches = emb_skill_matches
+            result.skills_score = emb_skills_score
+        else:
+            result.skill_matches, result.skills_score = self._match_skills(resume_shim, jd_shim)
         result.experience_match, result.experience_score = self._match_experience(resume_shim, jd_shim)
         result.education_match, result.education_score = self._match_education(resume_shim, jd_shim)
         result.keyword_match, result.keyword_score = self._match_keywords(resume_shim, jd_shim)
@@ -505,6 +529,34 @@ class MatchingEngine:
                     if skill.lower() in group and skill.lower() != target_lower:
                         return skill
         return None
+
+    def _match_skills_from_parsed(
+        self,
+        parsed: "ParsedResumeType",
+        job: "JobType",
+    ) -> tuple[list[SkillMatch] | None, float]:
+        """
+        Score skills using EmbeddingSkillScorer when available.
+
+        Works directly on ParsedResume + Job model — no shim required.
+        Returns (None, 0.0) when scorer is unavailable (caller falls back to
+        _match_skills(shim)).
+        """
+        if not self._use_embedding_skill_scorer or self.skill_scorer is None:
+            return None, 0.0
+
+        required_skills: list[str] = [
+            s.name for s in job.skill_requirements if s.is_required
+        ]
+        preferred_skills: list[str] = [
+            s.name for s in job.skill_requirements if not s.is_required
+        ]
+        candidate_skills: list[str] = [
+            skill for cat in parsed.skills for skill in cat.skills
+        ]
+
+        scorer: EmbeddingSkillScorerType = self.skill_scorer
+        return scorer.score_skills(required_skills, preferred_skills, candidate_skills)
 
     def _match_experience(
         self,

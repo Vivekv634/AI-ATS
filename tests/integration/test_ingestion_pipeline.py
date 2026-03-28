@@ -346,3 +346,90 @@ class TestAccurateJDParserIntegration:
         assert result.candidate_name != ""
         assert result.score_breakdown is not None
         assert result.job_title == (parsed_jd.title or "Python Backend Engineer")
+
+
+# ---------------------------------------------------------------------------
+# EmbeddingSkillScorer integration
+# ---------------------------------------------------------------------------
+
+class TestEmbeddingSkillScorerIntegration:
+    """Integration tests for EmbeddingSkillScorer wired into match_from_parsed."""
+
+    def test_score_skills_returns_tuple_with_matches_and_score(self) -> None:
+        """EmbeddingSkillScorer.score_skills() returns (list[SkillMatch], float)."""
+        from src.core.matching.skill_scorer import EmbeddingSkillScorer
+        from src.data.models import SkillMatch
+
+        scorer: EmbeddingSkillScorer = EmbeddingSkillScorer()
+        required: list[str] = ["Python", "FastAPI", "PostgreSQL"]
+        preferred: list[str] = ["Docker", "Kubernetes"]
+        candidate: list[str] = ["python", "fastapi", "sql", "docker"]
+
+        matches: list[SkillMatch]
+        score: float
+        matches, score = scorer.score_skills(required, preferred, candidate)
+
+        assert isinstance(matches, list)
+        assert all(isinstance(m, SkillMatch) for m in matches)
+        assert 0.0 <= score <= 1.0
+        assert len(matches) == len(required) + len(preferred)
+
+    def test_match_from_parsed_skill_score_with_embedding_scorer(self) -> None:
+        """match_from_parsed() uses EmbeddingSkillScorer for skill matching."""
+        from src.ml.nlp.accurate_resume_parser import AccurateResumeParser
+        from src.data.models.job import Job, SkillRequirement
+        from src.core.matching.matching_engine import MatchingEngine, MatchResult
+
+        job: Job = Job(
+            title="Python Engineer",
+            description="We need a Python backend engineer with FastAPI experience.",
+            responsibilities=["Build Python APIs"],
+            company_name="TestCo",
+            skill_requirements=[
+                SkillRequirement(name="python", is_required=True),
+                SkillRequirement(name="fastapi", is_required=True),
+            ],
+        )
+
+        resume_parser: AccurateResumeParser = AccurateResumeParser()
+        parsed_resume = resume_parser.parse(RESUMES_DIR / "vivek_resume.pdf")
+
+        engine: MatchingEngine = MatchingEngine(use_semantic=False)
+        result: MatchResult = engine.match_from_parsed(parsed_resume, job)
+
+        assert result.overall_score >= 0.0
+        assert result.skills_score >= 0.0
+        assert len(result.skill_matches) >= 2
+        req_matches: list = [m for m in result.skill_matches if m.required]
+        assert len(req_matches) == 2
+
+    def test_match_from_parsed_skill_matches_have_correct_fields(self) -> None:
+        """SkillMatch objects from EmbeddingSkillScorer have all expected fields."""
+        from src.ml.nlp.accurate_resume_parser import AccurateResumeParser
+        from src.data.models.job import Job, SkillRequirement
+        from src.core.matching.matching_engine import MatchingEngine, MatchResult
+        from src.data.models import SkillMatch
+
+        job: Job = Job(
+            title="ML Engineer",
+            description="ML engineer role requiring Python and machine learning.",
+            responsibilities=["Build ML models"],
+            company_name="AI Corp",
+            skill_requirements=[
+                SkillRequirement(name="python", is_required=True),
+                SkillRequirement(name="machine learning", is_required=False),
+            ],
+        )
+
+        resume_parser: AccurateResumeParser = AccurateResumeParser()
+        parsed_resume = resume_parser.parse(RESUMES_DIR / "vivek_resume.pdf")
+
+        engine: MatchingEngine = MatchingEngine(use_semantic=False)
+        result: MatchResult = engine.match_from_parsed(parsed_resume, job)
+
+        for sm in result.skill_matches:
+            assert isinstance(sm, SkillMatch)
+            assert isinstance(sm.skill_name, str)
+            assert isinstance(sm.required, bool)
+            assert isinstance(sm.match_score, float)
+            assert 0.0 <= sm.match_score <= 1.0
