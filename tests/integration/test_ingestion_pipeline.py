@@ -2,10 +2,11 @@
 End-to-end ingestion pipeline tests using real PDFs from data/raw/resumes/.
 MongoDB is replaced with an in-memory FakeRepo — no live DB required.
 """
+from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 import pytest
 
@@ -163,3 +164,95 @@ class TestEmbeddingTextBuilding:
             parsed: ParsedResume = parser.parse(pdf)
             text: str = svc._build_text(parsed)
             assert len(text) > 0, f"{pdf.name}: _build_text returned empty string"
+
+
+# ---------------------------------------------------------------------------
+# Job embedding text-building integration
+# ---------------------------------------------------------------------------
+
+class TestJobEmbeddingIntegration:
+    """Verifies job-side text building and end-to-end SemanticMatcher path."""
+
+    def test_build_jd_text_non_empty_for_real_job(self) -> None:
+        import numpy as np
+        from unittest.mock import MagicMock
+        from src.ml.embeddings.embedding_service import EmbeddingService
+        from src.data.models.job import Job, SkillRequirement
+
+        job: Job = Job(
+            title="Python Backend Engineer",
+            description="Build high-performance REST APIs using Python and FastAPI.",
+            responsibilities=["Design scalable services", "Write unit tests"],
+            company_name="Acme Corp",
+            skill_requirements=[
+                SkillRequirement(name="python", is_required=True),
+                SkillRequirement(name="fastapi", is_required=True),
+                SkillRequirement(name="docker", is_required=False),
+            ],
+        )
+        svc: EmbeddingService = EmbeddingService(model=MagicMock(), store=MagicMock(), repo=None)  # type: ignore[arg-type]
+        text: str = svc._build_jd_text(job)
+        assert "python" in text.lower()
+        assert "fastapi" in text.lower()
+        assert len(text) > 50
+
+    def test_vivek_resume_vs_python_job_semantic_similarity(self) -> None:
+        """compute_similarity_from_parsed returns SemanticMatch for a real parsed resume."""
+        import numpy as np
+        from src.ml.embeddings.semantic_similarity import SemanticMatcher
+        from src.ml.nlp.accurate_resume_parser import AccurateResumeParser, ParsedResume
+        from src.data.models.job import Job, SkillRequirement
+        from src.data.models import SemanticMatch
+
+        class _FakeModel:
+            model_name: str = "fake"
+
+            def encode(self, text: Any, **kw: Any) -> np.ndarray:
+                if isinstance(text, list):
+                    return np.ones((len(text), 4), dtype=np.float32)
+                return np.ones(4, dtype=np.float32)
+
+            def similarity(self, a: np.ndarray, b: np.ndarray) -> float:
+                return 0.85
+
+        parser: AccurateResumeParser = AccurateResumeParser()
+        parsed: ParsedResume = parser.parse(RESUMES_DIR / "vivek_resume.pdf")
+
+        job: Job = Job(
+            title="Python Backend Engineer",
+            description="Build REST APIs with Python and FastAPI.",
+            responsibilities=["Design APIs", "Write tests"],
+            company_name="Acme",
+            skill_requirements=[SkillRequirement(name="python", is_required=True)],
+        )
+
+        matcher: SemanticMatcher = SemanticMatcher(
+            embedding_model=_FakeModel()  # type: ignore[arg-type]
+        )
+        result: SemanticMatch = matcher.compute_similarity_from_parsed(parsed, job)
+        assert result.overall_similarity == pytest.approx(0.85, abs=1e-4)
+        assert 0.0 <= result.skills_similarity <= 1.0
+
+    def test_match_from_parsed_pipeline_end_to_end(self) -> None:
+        """MatchingEngine.match_from_parsed returns populated MatchResult for real PDF."""
+        from src.core.matching.matching_engine import MatchingEngine, MatchResult
+        from src.ml.nlp.accurate_resume_parser import AccurateResumeParser, ParsedResume
+        from src.data.models.job import Job, SkillRequirement
+
+        parser: AccurateResumeParser = AccurateResumeParser()
+        parsed: ParsedResume = parser.parse(RESUMES_DIR / "vivek_resume.pdf")
+
+        job: Job = Job(
+            title="Python Backend Engineer",
+            description="Build REST APIs with Python and FastAPI.",
+            responsibilities=["Design APIs", "Write unit tests"],
+            company_name="Acme",
+            skill_requirements=[SkillRequirement(name="python", is_required=True)],
+        )
+
+        engine: MatchingEngine = MatchingEngine(use_semantic=False)
+        result: MatchResult = engine.match_from_parsed(parsed, job)
+
+        assert result.overall_score > 0.0
+        assert "vivek" in result.candidate_name.lower()
+        assert result.score_breakdown is not None

@@ -5,10 +5,15 @@ Scores and ranks candidates against job requirements using multiple
 matching strategies including skills matching, experience matching,
 education matching, keyword matching, and semantic similarity.
 """
+from __future__ import annotations
 
 from collections import Counter
 from dataclasses import dataclass, field
-from typing import Any, Optional
+from typing import TYPE_CHECKING, Any, Optional
+
+if TYPE_CHECKING:
+    from src.ml.nlp.accurate_resume_parser import ParsedResume as ParsedResumeType
+    from src.data.models.job import Job as JobType
 
 from src.data.models import (
     BiasCheckResult,
@@ -32,6 +37,35 @@ from src.utils.constants import (
 from src.utils.logger import get_logger
 
 logger = get_logger(__name__)
+
+
+def _estimate_years(duration: str) -> float:
+    """Best-effort year estimate from a duration string like '2019-2022' or '2 years'."""
+    import re
+    if not duration:
+        return 1.0
+    # "N years" or "N year"
+    m = re.search(r"(\d+(?:\.\d+)?)\s*year", duration, re.IGNORECASE)
+    if m:
+        return float(m.group(1))
+    # "N months"
+    m = re.search(r"(\d+)\s*month", duration, re.IGNORECASE)
+    if m:
+        return round(float(m.group(1)) / 12, 1)
+    # "YYYY - present/current/now"
+    if re.search(r"\b(present|current|now)\b", duration, re.IGNORECASE):
+        m_start = re.findall(r"\b(20\d{2}|19\d{2})\b", duration)
+        if m_start:
+            import datetime
+            years = datetime.date.today().year - int(m_start[0])
+            return float(max(years, 1))
+    # "YYYY - YYYY" or "YYYY–YYYY"
+    m = re.findall(r"\b(20\d{2}|19\d{2})\b", duration)
+    if len(m) >= 2:
+        years = abs(int(m[-1]) - int(m[0]))
+        return float(max(years, 1))
+    # fallback: assume 1 year per entry
+    return 1.0
 
 
 @dataclass
@@ -227,6 +261,116 @@ class MatchingEngine:
 
         # Perform bias detection if enabled
         result.bias_check = self._check_bias(resume_result, result.overall_score)
+
+        return result
+
+    def match_from_parsed(
+        self,
+        parsed: "ParsedResumeType",
+        job: "JobType",
+    ) -> MatchResult:
+        """
+        Match a ParsedResume (AccurateResumeParser output) against a Job model.
+
+        Primary entry point for the new accurate-parser pipeline. Converts
+        ParsedResume + Job into thin shims for the existing _match_* sub-methods,
+        then routes semantic similarity through compute_similarity_from_parsed()
+        for real vector-based scores instead of the old ResumeParseResult path.
+
+        Args:
+            parsed: Output of AccurateResumeParser.
+            job: The Job pydantic model from the database.
+
+        Returns:
+            MatchResult with all scores, breakdown, and explanation.
+        """
+        # -- Build minimal JDParseResult shim from Job model ------------------
+        jd_shim: JDParseResult = JDParseResult(
+            raw_text=(
+                f"{job.title} {job.description or ''} "
+                + " ".join(job.responsibilities)
+            ),
+            title=job.title,
+            company_name=job.company_name,
+            description=job.description or "",
+            responsibilities=list(job.responsibilities),
+            required_skills=[s.name for s in job.skill_requirements if s.is_required],
+            preferred_skills=[s.name for s in job.skill_requirements if not s.is_required],
+            experience_years_min=(
+                job.experience_requirement.minimum_years
+                if job.experience_requirement else None
+            ),
+            education_requirement=(
+                job.education_requirement.minimum_degree
+                if job.education_requirement else None
+            ),
+        )
+
+        # -- Build minimal ResumeParseResult shim from ParsedResume -----------
+        skills_list: list[dict[str, Any]] = [
+            {"name": skill, "category": cat.category}
+            for cat in parsed.skills
+            for skill in cat.skills
+        ]
+        resume_shim: ResumeParseResult = ResumeParseResult()
+        resume_shim.contact = {
+            "full_name": parsed.contact.name,
+            "email": parsed.contact.email,
+        }
+        resume_shim.skills = skills_list
+        resume_shim.total_experience_years = sum(
+            _estimate_years(e.duration) for e in parsed.experience
+        )
+        resume_shim.highest_education = (
+            parsed.education[0].degree if parsed.education else None
+        )
+
+        # Populate preprocessed so _match_keywords can find resume text
+        from dataclasses import dataclass as _dc
+
+        @_dc
+        class _MinimalPreprocessed:
+            cleaned_text: str
+            sections: list = None  # type: ignore[assignment]
+
+        resume_shim.preprocessed = _MinimalPreprocessed(
+            cleaned_text=parsed.raw_text, sections=[]
+        )
+
+        # -- Run all existing match sub-methods --------------------------------
+        result: MatchResult = MatchResult(
+            resume_result=resume_shim,
+            jd_result=jd_shim,
+        )
+        result.candidate_name = parsed.contact.name or "Unknown Candidate"
+        result.job_title = job.title
+
+        result.skill_matches, result.skills_score = self._match_skills(resume_shim, jd_shim)
+        result.experience_match, result.experience_score = self._match_experience(resume_shim, jd_shim)
+        result.education_match, result.education_score = self._match_education(resume_shim, jd_shim)
+        result.keyword_match, result.keyword_score = self._match_keywords(resume_shim, jd_shim)
+
+        # -- Semantic step: new typed path if matcher available ----------------
+        if self.use_semantic and self.semantic_matcher is not None:
+            try:
+                semantic_match = self.semantic_matcher.compute_similarity_from_parsed(
+                    parsed, job
+                )
+                result.semantic_match = semantic_match
+                result.semantic_score = round(semantic_match.overall_similarity, 3)
+            except Exception as exc:
+                logger.warning(f"compute_similarity_from_parsed failed: {exc}")
+                result.semantic_match = None
+                result.semantic_score = 0.0
+        else:
+            result.semantic_match = None
+            result.semantic_score = 0.0
+
+        result.score_breakdown = self._calculate_breakdown(result)
+        result.overall_score = result.score_breakdown.total_score
+        result.score_level = MatchScoreLevel.from_score(result.overall_score)
+        result.explanation = self._generate_explanation(result)
+        result.bias_check = self._check_bias(resume_shim, result.overall_score)
 
         return result
 

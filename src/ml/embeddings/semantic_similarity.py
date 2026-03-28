@@ -4,9 +4,10 @@ Semantic similarity computation for resume-job matching.
 Provides high-level functions for computing semantic similarity
 between resumes and job descriptions using embeddings.
 """
+from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
 
 import numpy as np
 
@@ -14,6 +15,10 @@ from src.data.models import SemanticMatch
 from src.ml.nlp import ResumeParseResult, JDParseResult
 from src.utils.config import get_settings
 from src.utils.logger import get_logger
+
+if TYPE_CHECKING:
+    from src.ml.nlp.accurate_resume_parser import ParsedResume
+    from src.data.models.job import Job
 
 from .embedding_model import EmbeddingModel, get_embedding_model
 from .vector_store import (
@@ -369,6 +374,129 @@ class SemanticMatcher:
             return name or "Unknown"
         return "Unknown"
 
+    # ------------------------------------------------------------------
+    # ParsedResume/Job path — direct typed entry point
+    # ------------------------------------------------------------------
+
+    def compute_similarity_from_parsed(
+        self,
+        parsed: "ParsedResume",
+        job: "Job",
+    ) -> SemanticMatch:
+        """
+        Compute semantic similarity between a ParsedResume and a Job model.
+
+        Uses the same text-building logic as EmbeddingService so that similarity
+        is computed over identical text representations to what is stored in the
+        vector stores — ensuring consistency between indexed and query vectors.
+
+        Args:
+            parsed: Output of AccurateResumeParser.
+            job: The Job pydantic model from the database.
+
+        Returns:
+            SemanticMatch with overall, skills, experience, and summary scores.
+        """
+        resume_text: str = self._build_resume_text(parsed)
+        jd_text: str = self._build_jd_text(job)
+
+        if not resume_text or not jd_text:
+            return SemanticMatch(model_used=self._model_name)
+
+        # Overall similarity
+        resume_emb: np.ndarray = self.embedding_model.encode(resume_text)
+        jd_emb: np.ndarray = self.embedding_model.encode(jd_text)
+        overall_sim: float = self.embedding_model.similarity(resume_emb, jd_emb)
+
+        # Skills similarity
+        candidate_skill_names: list[str] = [
+            skill for cat in parsed.skills for skill in cat.skills
+        ]
+        job_skill_names: list[str] = [s.name for s in job.skill_requirements]
+        skills_sim: float = self._section_similarity(
+            ", ".join(candidate_skill_names),
+            ", ".join(job_skill_names),
+            default_when_empty=0.5,
+        )
+
+        # Experience similarity
+        exp_text: str = " ".join(
+            f"{e.title} {e.company} " + " ".join(e.bullets[:3])
+            for e in parsed.experience
+        )
+        resp_text: str = " ".join(job.responsibilities)
+        exp_sim: float = self._section_similarity(exp_text, resp_text, default_when_empty=0.0)
+
+        # Summary similarity — resume summary vs job title + first 500 chars of description
+        summary_text: str = parsed.summary or resume_text[:500]
+        jd_summary: str = f"{job.title}. {job.description[:500]}"
+        summary_sim: float = self._section_similarity(summary_text, jd_summary, default_when_empty=0.0)
+
+        return SemanticMatch(
+            overall_similarity=round(overall_sim, 4),
+            skills_similarity=round(skills_sim, 4),
+            experience_similarity=round(exp_sim, 4),
+            summary_similarity=round(summary_sim, 4),
+            model_used=self._model_name,
+        )
+
+    def _build_resume_text(self, parsed: "ParsedResume") -> str:
+        """Build embedding text from ParsedResume (mirrors EmbeddingService._build_text)."""
+        parts: list[str] = []
+
+        if parsed.summary:
+            parts.append(parsed.summary)
+
+        for cat in parsed.skills:
+            parts.append(f"{cat.category}: {', '.join(cat.skills)}")
+
+        for exp in parsed.experience:
+            header: str = " at ".join(p for p in [exp.title, exp.company] if p).strip()
+            parts.append(header)
+            parts.extend(exp.bullets[:3])
+
+        for edu in parsed.education:
+            parts.append(f"{edu.degree} {edu.institution}".strip())
+
+        for proj in parsed.projects:
+            parts.append(proj.name)
+            parts.extend(proj.bullets[:2])
+
+        text: str = " ".join(p for p in parts if p.strip())
+        if not text and parsed.raw_text:
+            text = parsed.raw_text
+        return text
+
+    def _build_jd_text(self, job: "Job") -> str:
+        """Build embedding text from Job model (mirrors EmbeddingService._build_jd_text)."""
+        parts: list[str] = []
+        parts.append(job.title)
+        if job.description:
+            parts.append(job.description)
+        for resp in job.responsibilities:
+            parts.append(resp)
+        required: list[str] = [s.name for s in job.skill_requirements if s.is_required]
+        preferred: list[str] = [s.name for s in job.skill_requirements if not s.is_required]
+        all_skills: list[str] = required + preferred
+        if all_skills:
+            parts.append("Skills: " + ", ".join(all_skills))
+        if job.company_description:
+            parts.append(job.company_description)
+        return " ".join(p for p in parts if p.strip())
+
+    def _section_similarity(
+        self,
+        text_a: str,
+        text_b: str,
+        default_when_empty: float = 0.0,
+    ) -> float:
+        """Compute similarity between two text sections; return default if either is empty."""
+        if not text_a or not text_b:
+            return default_when_empty
+        emb_a: np.ndarray = self.embedding_model.encode(text_a)
+        emb_b: np.ndarray = self.embedding_model.encode(text_b)
+        return self.embedding_model.similarity(emb_a, emb_b)
+
     def batch_compute_similarity(
         self,
         resume_results: list[ResumeParseResult],
@@ -378,6 +506,11 @@ class SemanticMatcher:
         """
         Compute similarity for multiple resumes against a single job.
 
+        All four JD-side embeddings are computed once and reused across every
+        resume. Resume component texts (skills, experience, summary) are
+        batch-encoded per section type to minimise model calls while still
+        producing genuine per-component similarity scores.
+
         Args:
             resume_results: List of parsed resumes.
             jd_result: Parsed job description.
@@ -386,41 +519,117 @@ class SemanticMatcher:
         Returns:
             List of (index, SemanticMatch) tuples.
         """
-        results = []
+        # ── JD embeddings — computed once, shared across all resumes ──────
+        jd_full_emb = self.embedding_model.encode(jd_result.raw_text)
 
-        # Get JD embedding once
-        jd_embedding = self.embedding_model.encode(jd_result.raw_text)
-
-        # Get all resume texts
-        resume_texts = [self._get_resume_text(r) for r in resume_results]
-
-        # Batch encode resumes
-        valid_indices = [i for i, t in enumerate(resume_texts) if t]
-        valid_texts = [resume_texts[i] for i in valid_indices]
-
-        if not valid_texts:
-            return []
-
-        resume_embeddings = self.embedding_model.encode(
-            valid_texts,
-            show_progress=show_progress,
+        jd_skills_text = ", ".join(
+            jd_result.required_skills + jd_result.preferred_skills
+        )
+        jd_skills_emb = (
+            self.embedding_model.encode(jd_skills_text) if jd_skills_text else None
         )
 
-        # Compute similarities
-        for idx, (i, emb) in enumerate(zip(valid_indices, resume_embeddings)):
-            overall_sim = self.embedding_model.similarity(emb, jd_embedding)
+        jd_resp_text = " ".join(jd_result.responsibilities)
+        jd_resp_emb = (
+            self.embedding_model.encode(jd_resp_text) if jd_resp_text else None
+        )
 
-            # For batch processing, use overall similarity for all components
-            # (detailed component analysis would be too slow)
-            match = SemanticMatch(
-                overall_similarity=round(overall_sim, 4),
-                summary_similarity=round(overall_sim, 4),
-                skills_similarity=round(overall_sim, 4),
-                experience_similarity=round(overall_sim, 4),
-                model_used=self._model_name,
+        jd_summary_emb = self.embedding_model.encode(
+            f"{jd_result.title}. {jd_result.raw_text[:500]}"
+        )
+
+        # ── Filter to resumes that have extractable text ───────────────────
+        resume_full_texts = [self._get_resume_text(r) for r in resume_results]
+        valid_indices = [i for i, t in enumerate(resume_full_texts) if t]
+
+        if not valid_indices:
+            return []
+
+        valid_resumes = [resume_results[i] for i in valid_indices]
+        valid_full_texts = [resume_full_texts[i] for i in valid_indices]
+
+        # Batch-encode full resume texts (for overall similarity)
+        full_embeddings = self.embedding_model.encode(
+            valid_full_texts, show_progress=show_progress
+        )
+
+        # ── Extract resume component texts ────────────────────────────────
+        skills_texts = [
+            ", ".join(s.get("name", "") for s in r.skills if s.get("name"))
+            for r in valid_resumes
+        ]
+
+        exp_texts = [
+            " ".join(
+                sec.content
+                for sec in (r.preprocessed.sections if r.preprocessed else [])
+                if sec.section_type in ("experience", "work_history")
+            )
+            for r in valid_resumes
+        ]
+
+        summary_texts = []
+        for r in valid_resumes:
+            text = ""
+            if r.preprocessed and r.preprocessed.sections:
+                for sec in r.preprocessed.sections:
+                    if sec.section_type in ("summary", "objective", "profile"):
+                        text = sec.content
+                        break
+            if not text:
+                full = self._get_resume_text(r)
+                text = full[:500] if full else ""
+            summary_texts.append(text)
+
+        # ── Batch-encode resume component texts ───────────────────────────
+        def _batch_encode(texts: list[str]) -> list[Optional[np.ndarray]]:
+            """Encode non-empty texts in one model call; return None for empty."""
+            non_empty = [(i, t) for i, t in enumerate(texts) if t]
+            result: list[Optional[np.ndarray]] = [None] * len(texts)
+            if non_empty:
+                idxs, txts = zip(*non_empty)
+                # encode() returns 2D array when given a list
+                embs = self.embedding_model.encode(list(txts))
+                for idx, emb in zip(idxs, embs):
+                    result[idx] = emb
+            return result
+
+        skills_embs = _batch_encode(skills_texts)
+        exp_embs = _batch_encode(exp_texts)
+        summary_embs = _batch_encode(summary_texts)
+
+        # ── Compute per-resume matches ─────────────────────────────────────
+        results = []
+        for local_idx, i in enumerate(valid_indices):
+            overall_sim = self.embedding_model.similarity(
+                full_embeddings[local_idx], jd_full_emb
             )
 
-            results.append((i, match))
+            skills_sim = (
+                self.embedding_model.similarity(skills_embs[local_idx], jd_skills_emb)
+                if skills_embs[local_idx] is not None and jd_skills_emb is not None
+                else (0.5 if not jd_skills_text else 0.0)
+            )
+
+            exp_sim = (
+                self.embedding_model.similarity(exp_embs[local_idx], jd_resp_emb)
+                if exp_embs[local_idx] is not None and jd_resp_emb is not None
+                else (0.5 if not jd_resp_text else 0.0)
+            )
+
+            summary_sim = (
+                self.embedding_model.similarity(summary_embs[local_idx], jd_summary_emb)
+                if summary_embs[local_idx] is not None
+                else 0.0
+            )
+
+            results.append((i, SemanticMatch(
+                overall_similarity=round(overall_sim, 4),
+                summary_similarity=round(summary_sim, 4),
+                skills_similarity=round(skills_sim, 4),
+                experience_similarity=round(exp_sim, 4),
+                model_used=self._model_name,
+            )))
 
         return results
 

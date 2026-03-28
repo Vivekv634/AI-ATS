@@ -4,6 +4,7 @@ Job repository for AI-ATS.
 Provides data access operations for job posting documents,
 including search, filtering, and analytics capabilities.
 """
+from __future__ import annotations
 
 from datetime import date, datetime
 from typing import Any, Optional
@@ -15,7 +16,10 @@ from src.data.models.job import (
     ExperienceLevel,
     Job,
     JobCreate,
+    JobMetadata,
     JobUpdate,
+    Location,
+    ScoringWeights,
     WorkLocation,
 )
 from src.utils.constants import JobStatus
@@ -41,9 +45,9 @@ class JobRepository(BaseRepository[Job]):
     # Create Operations
     # -------------------------------------------------------------------------
 
-    def create_from_schema(self, data: JobCreate) -> Job:
-        """Create a job from a create schema."""
-        job = Job(
+    def create_from_schema(self, data: "JobCreate") -> "Job":
+        """Create a job from a create schema and auto-embed it (non-fatal)."""
+        job: Job = Job(
             title=data.title,
             description=data.description,
             responsibilities=data.responsibilities,
@@ -52,7 +56,7 @@ class JobRepository(BaseRepository[Job]):
             company_description=data.company_description,
             employment_type=data.employment_type,
             work_location=data.work_location,
-            location=data.location if data.location else None,
+            location=data.location or Location(),
             salary=data.salary,
             experience_level=data.experience_level,
             skill_requirements=data.skill_requirements,
@@ -63,10 +67,20 @@ class JobRepository(BaseRepository[Job]):
             closing_date=data.closing_date,
             target_hire_date=data.target_hire_date,
             positions_available=data.positions_available,
-            scoring_weights=data.scoring_weights if data.scoring_weights else None,
-            metadata=data.metadata if data.metadata else None,
+            scoring_weights=data.scoring_weights or ScoringWeights.from_defaults(),
+            metadata=data.metadata or JobMetadata(),
         )
-        return self.create(job)
+        created_job: Job = self.create(job)
+
+        # Auto-embed (non-fatal — never blocks job creation)
+        try:
+            from src.ml.embeddings.embedding_service import EmbeddingService
+            emb_svc: EmbeddingService = EmbeddingService(repo=self)
+            emb_svc.embed_job(str(created_job.id), created_job)
+        except Exception as exc:
+            logger.warning(f"Job embedding failed (non-fatal) for '{created_job.title}': {exc}")
+
+        return created_job
 
     async def create_from_schema_async(self, data: JobCreate) -> Job:
         """Create a job from a create schema asynchronously."""
@@ -79,7 +93,7 @@ class JobRepository(BaseRepository[Job]):
             company_description=data.company_description,
             employment_type=data.employment_type,
             work_location=data.work_location,
-            location=data.location if data.location else None,
+            location=data.location or Location(),
             salary=data.salary,
             experience_level=data.experience_level,
             skill_requirements=data.skill_requirements,
@@ -90,8 +104,8 @@ class JobRepository(BaseRepository[Job]):
             closing_date=data.closing_date,
             target_hire_date=data.target_hire_date,
             positions_available=data.positions_available,
-            scoring_weights=data.scoring_weights if data.scoring_weights else None,
-            metadata=data.metadata if data.metadata else None,
+            scoring_weights=data.scoring_weights or ScoringWeights.from_defaults(),
+            metadata=data.metadata or JobMetadata(),
         )
         return await self.create_async(job)
 

@@ -1,9 +1,13 @@
 """
-EmbeddingService — generates and stores resume embeddings after ingestion.
+EmbeddingService — generates and stores resume and job embeddings after ingestion.
 
-Flow:
+Flow (resume):
   ParsedResume → build text → EmbeddingModel.encode_resume() →
   VectorStore.upsert() → CandidateRepository.set_embedding_id()
+
+Flow (job):
+  Job → build text → EmbeddingModel.encode_job_description() →
+  VectorStore.upsert() → JobRepository.set_embedding_id()
 """
 from __future__ import annotations
 
@@ -12,18 +16,19 @@ from typing import Any, Optional, TYPE_CHECKING
 import numpy as np
 
 from src.ml.embeddings.embedding_model import EmbeddingModel, get_embedding_model
-from src.ml.embeddings.vector_store import VectorStore, get_resume_store
+from src.ml.embeddings.vector_store import VectorStore, get_resume_store, get_job_store
 from src.utils.logger import get_logger
 
 if TYPE_CHECKING:
     from src.ml.nlp.accurate_resume_parser import ParsedResume
+    from src.data.models.job import Job
 
 logger = get_logger(__name__)
 
 
 class EmbeddingService:
     """
-    Thin orchestrator: build resume text → encode → upsert to VectorStore → link ID.
+    Thin orchestrator: build resume/job text → encode → upsert to VectorStore → link ID.
 
     Inject fakes for model and store in tests; uses real singletons in production.
     """
@@ -32,10 +37,12 @@ class EmbeddingService:
         self,
         model: Optional[EmbeddingModel] = None,
         store: Optional[VectorStore] = None,
+        job_store: Optional[VectorStore] = None,
         repo: Optional[Any] = None,
     ) -> None:
         self._model: EmbeddingModel = model or get_embedding_model()
-        self._store: VectorStore = store or get_resume_store()
+        self._store: VectorStore = store or get_resume_store()   # candidate store
+        self._job_store: Optional[VectorStore] = job_store       # job store — lazy
         self._repo: Optional[Any] = repo
 
     def embed_candidate(
@@ -91,7 +98,7 @@ class EmbeddingService:
             parts.append(line)
 
         for exp in parsed.experience:
-            header: str = f"{exp.title} at {exp.company}".strip(" at")
+            header: str = " at ".join(p for p in [exp.title, exp.company] if p).strip()
             parts.append(header)
             parts.extend(exp.bullets[:3])
 
@@ -109,3 +116,74 @@ class EmbeddingService:
             text = parsed.raw_text
 
         return text
+
+    def embed_job(
+        self,
+        job_id: str,
+        job: "Job",
+    ) -> str:
+        """
+        Generate, store, and link an embedding for one job.
+
+        Args:
+            job_id: MongoDB ID string of the stored Job document.
+            job: Job model instance to embed.
+
+        Returns:
+            embedding_id — the ChromaDB/FAISS document ID used to store the vector.
+        """
+        text: str = self._build_jd_text(job)
+        embedding: np.ndarray = self._model.encode_job_description(text)
+        embedding_id: str = f"job_{job_id}"
+
+        if self._job_store is None:
+            self._job_store = get_job_store()
+        store: VectorStore = self._job_store
+        store.upsert(
+            ids=[embedding_id],
+            embeddings=np.array([embedding]),
+            documents=[text],
+            metadatas=[{
+                "job_id": job_id,
+                "job_title": job.title,
+                "company_name": job.company_name,
+            }],
+        )
+
+        if self._repo is not None:
+            self._repo.set_embedding_id(job_id, embedding_id)
+
+        logger.info(f"Embedded job {job_id} → {embedding_id}")
+        return embedding_id
+
+    def _build_jd_text(self, job: "Job") -> str:
+        """
+        Build a plain-text representation of a Job for embedding.
+
+        Concatenates: title, description, responsibilities, required then
+        preferred skills, and company description.
+        """
+        parts: list[str] = []
+
+        parts.append(job.title)
+
+        if job.description:
+            parts.append(job.description)
+
+        for responsibility in job.responsibilities:
+            parts.append(responsibility)
+
+        required_skills: list[str] = [
+            sr.name for sr in job.skill_requirements if sr.is_required
+        ]
+        preferred_skills: list[str] = [
+            sr.name for sr in job.skill_requirements if not sr.is_required
+        ]
+        all_skills: list[str] = required_skills + preferred_skills
+        if all_skills:
+            parts.append("Skills: " + ", ".join(all_skills))
+
+        if job.company_description:
+            parts.append(job.company_description)
+
+        return " ".join(p for p in parts if p.strip())
