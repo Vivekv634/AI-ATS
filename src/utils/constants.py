@@ -101,6 +101,19 @@ SCORE_THRESHOLDS: Final[dict[str, float]] = {
     "poor": 0.30,
 }
 
+# Skill embedding similarity thresholds
+SKILL_EXACT_THRESHOLD: Final[float] = 0.92
+"""Cosine similarity >= this value -> treat as exact match (score = 1.0)."""
+
+SKILL_STRONG_PARTIAL_THRESHOLD: Final[float] = 0.75
+"""Cosine similarity >= this value -> strong partial match (score = 0.8)."""
+
+SKILL_WEAK_PARTIAL_THRESHOLD: Final[float] = 0.60
+"""Cosine similarity >= this value -> weak partial match (score = 0.5)."""
+
+EXP_RELEVANCE_TITLE_THRESHOLD: Final[float] = 0.40
+"""Cosine similarity >= this value -> experience entry title added to relevant_titles_matched."""
+
 
 # =============================================================================
 # Ethical AI Constants
@@ -124,6 +137,13 @@ FAIRNESS_THRESHOLDS: Final[dict[str, float]] = {
     "equalized_odds_difference": 0.1,
     "disparate_impact_ratio": 0.8,
 }
+
+# Minimum number of candidates required in a demographic group before that
+# group is included in fairness metric calculations.  Groups smaller than this
+# produce statistically unreliable rates (e.g. one extra selection/rejection
+# swings the positive rate by 20–50 %), which could mask or falsely trigger
+# fairness violations.  Configurable via FairnessCalculator(min_group_size=N).
+FAIRNESS_MIN_GROUP_SIZE: Final[int] = 5
 
 
 # =============================================================================

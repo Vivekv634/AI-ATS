@@ -433,3 +433,100 @@ class TestEmbeddingSkillScorerIntegration:
             assert isinstance(sm.required, bool)
             assert isinstance(sm.match_score, float)
             assert 0.0 <= sm.match_score <= 1.0
+
+
+# ---------------------------------------------------------------------------
+# TestDomainAwareExperienceScorerIntegration
+# ---------------------------------------------------------------------------
+
+class TestDomainAwareExperienceScorerIntegration:
+    """End-to-end: DomainAwareExperienceScorer inside MatchingEngine.match_from_parsed()."""
+
+    def test_experience_match_object_populated(self) -> None:
+        """match_from_parsed() returns a non-None ExperienceMatch with score in [0,1]."""
+        from src.ml.nlp.accurate_resume_parser import AccurateResumeParser
+        from src.data.models.job import Job, ExperienceRequirement
+        from src.core.matching.matching_engine import MatchingEngine, MatchResult
+        from src.data.models import ExperienceMatch
+
+        job: Job = Job(
+            title="Python Backend Engineer",
+            description="Python backend role with FastAPI and PostgreSQL.",
+            responsibilities=[
+                "Build REST APIs with FastAPI",
+                "Write and maintain Python services",
+                "Code review and mentoring",
+            ],
+            company_name="AI Corp",
+            experience_requirement=ExperienceRequirement(minimum_years=2.0),
+        )
+
+        resume_parser: AccurateResumeParser = AccurateResumeParser()
+        parsed_resume: ParsedResume = resume_parser.parse(RESUMES_DIR / "vivek_resume.pdf")
+
+        engine: MatchingEngine = MatchingEngine(use_semantic=False, use_bias_detection=False)
+        result: MatchResult = engine.match_from_parsed(parsed_resume, job)
+
+        assert result.experience_match is not None
+        exp: ExperienceMatch = result.experience_match
+        assert 0.0 <= exp.score <= 1.0
+        assert exp.required_years == pytest.approx(2.0)
+        assert exp.candidate_years >= 0.0
+        assert 0.0 <= result.experience_score <= 1.0
+
+    def test_relevant_titles_matched_is_list(self) -> None:
+        """relevant_titles_matched on ExperienceMatch is a list (may be empty for mismatched roles)."""
+        from src.ml.nlp.accurate_resume_parser import AccurateResumeParser
+        from src.data.models.job import Job, ExperienceRequirement
+        from src.core.matching.matching_engine import MatchingEngine, MatchResult
+        from src.data.models import ExperienceMatch
+
+        job: Job = Job(
+            title="Python ML Engineer",
+            description="Machine learning engineering role.",
+            responsibilities=[
+                "Develop ML pipelines in Python",
+                "Build and evaluate models",
+            ],
+            company_name="AI Corp",
+            experience_requirement=ExperienceRequirement(minimum_years=1.0),
+        )
+
+        resume_parser: AccurateResumeParser = AccurateResumeParser()
+        parsed_resume: ParsedResume = resume_parser.parse(RESUMES_DIR / "vivek_resume.pdf")
+
+        engine: MatchingEngine = MatchingEngine(use_semantic=False, use_bias_detection=False)
+        result: MatchResult = engine.match_from_parsed(parsed_resume, job)
+
+        assert result.experience_match is not None
+        exp: ExperienceMatch = result.experience_match
+        assert isinstance(exp.relevant_titles_matched, list)
+        # Verify the domain-aware scorer was actually invoked (not silently bypassed)
+        assert result.experience_score > 0.0
+        # All entries in relevant_titles_matched must be non-empty strings
+        for title in exp.relevant_titles_matched:
+            assert isinstance(title, str) and len(title) > 0
+
+    def test_overall_score_includes_experience_component(self) -> None:
+        """overall_score is non-zero and incorporates the experience component."""
+        from src.ml.nlp.accurate_resume_parser import AccurateResumeParser, ParsedResume
+        from src.data.models.job import Job
+        from src.core.matching.matching_engine import MatchingEngine, MatchResult
+
+        job: Job = Job(
+            title="Software Engineer",
+            description="General software engineering role.",
+            responsibilities=["write code", "review PRs"],
+            company_name="AI Corp",
+        )
+
+        resume_parser: AccurateResumeParser = AccurateResumeParser()
+        parsed_resume: ParsedResume = resume_parser.parse(RESUMES_DIR / "vivek_resume.pdf")
+
+        engine: MatchingEngine = MatchingEngine(use_semantic=False, use_bias_detection=False)
+        result: MatchResult = engine.match_from_parsed(parsed_resume, job)
+
+        # No experience requirement → score = 1.0 (has experience) or 0.5 (no experience)
+        assert 0.0 <= result.overall_score <= 1.0
+        assert result.experience_score in {0.5, 1.0}  # no requirement path
+        assert result.overall_score > 0.0

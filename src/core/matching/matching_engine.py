@@ -15,6 +15,7 @@ if TYPE_CHECKING:
     from src.ml.nlp.accurate_resume_parser import ParsedResume as ParsedResumeType
     from src.data.models.job import Job as JobType
     from src.core.matching.skill_scorer import EmbeddingSkillScorer as EmbeddingSkillScorerType
+    from src.core.matching.experience_scorer import DomainAwareExperienceScorer as DomainAwareExperienceScorerType
 
 from src.data.models import (
     BiasCheckResult,
@@ -159,6 +160,8 @@ class MatchingEngine:
         self._explainer = None
         self._skill_scorer: Optional["EmbeddingSkillScorerType"] = None
         self._use_embedding_skill_scorer: bool = True
+        self._experience_scorer: Optional["DomainAwareExperienceScorerType"] = None
+        self._use_domain_experience_scorer: bool = True
 
     @property
     def semantic_matcher(self):
@@ -211,6 +214,19 @@ class MatchingEngine:
                 logger.warning(f"Could not initialize EmbeddingSkillScorer: {exc}")
                 self._use_embedding_skill_scorer = False
         return self._skill_scorer
+
+    @property
+    def experience_scorer(self) -> Optional["DomainAwareExperienceScorerType"]:
+        """Get the domain-aware experience scorer (lazy initialization)."""
+        if self._experience_scorer is None and self._use_domain_experience_scorer:
+            try:
+                from src.core.matching.experience_scorer import DomainAwareExperienceScorer
+                self._experience_scorer = DomainAwareExperienceScorer()
+                logger.info("DomainAwareExperienceScorer initialized successfully")
+            except Exception as exc:
+                logger.warning(f"Could not initialize DomainAwareExperienceScorer: {exc}")
+                self._use_domain_experience_scorer = False
+        return self._experience_scorer
 
     def match(
         self,
@@ -370,7 +386,15 @@ class MatchingEngine:
             result.skills_score = emb_skills_score
         else:
             result.skill_matches, result.skills_score = self._match_skills(resume_shim, jd_shim)
-        result.experience_match, result.experience_score = self._match_experience(resume_shim, jd_shim)
+        # Experience: use DomainAwareExperienceScorer for domain-weighted scoring when available
+        emb_exp_match: ExperienceMatch | None
+        emb_exp_score: float
+        emb_exp_match, emb_exp_score = self._match_experience_from_parsed(parsed, job)
+        if emb_exp_match is not None:
+            result.experience_match = emb_exp_match
+            result.experience_score = emb_exp_score
+        else:
+            result.experience_match, result.experience_score = self._match_experience(resume_shim, jd_shim)
         result.education_match, result.education_score = self._match_education(resume_shim, jd_shim)
         result.keyword_match, result.keyword_score = self._match_keywords(resume_shim, jd_shim)
 
@@ -557,6 +581,36 @@ class MatchingEngine:
 
         scorer: EmbeddingSkillScorerType = self.skill_scorer
         return scorer.score_skills(required_skills, preferred_skills, candidate_skills)
+
+    def _match_experience_from_parsed(
+        self,
+        parsed: "ParsedResumeType",
+        job: "JobType",
+    ) -> tuple[ExperienceMatch | None, float]:
+        """
+        Score experience using DomainAwareExperienceScorer when available.
+
+        Works directly on ParsedResume + Job model — no shim required.
+        Returns (None, 0.0) when scorer is unavailable (caller falls back to
+        _match_experience(shim)).
+        """
+        if not self._use_domain_experience_scorer or self.experience_scorer is None:
+            return None, 0.0
+
+        required_years: float = (
+            job.experience_requirement.minimum_years
+            if job.experience_requirement
+            else 0.0
+        )
+        responsibilities: list[str] = list(job.responsibilities)
+
+        scorer: DomainAwareExperienceScorerType = self.experience_scorer
+        return scorer.score_experience(
+            entries=parsed.experience,
+            required_years=required_years,
+            job_title=job.title,
+            responsibilities=responsibilities,
+        )
 
     def _match_experience(
         self,

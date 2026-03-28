@@ -9,6 +9,10 @@ from .skill_scorer import (
     EmbeddingSkillScorer,
     get_embedding_skill_scorer,
 )
+from .experience_scorer import (
+    DomainAwareExperienceScorer,
+    get_domain_aware_experience_scorer,
+)
 
 __all__ = [
     "MatchingEngine",
@@ -16,4 +20,6 @@ __all__ = [
     "get_matching_engine",
     "EmbeddingSkillScorer",
     "get_embedding_skill_scorer",
+    "DomainAwareExperienceScorer",
+    "get_domain_aware_experience_scorer",
 ]
