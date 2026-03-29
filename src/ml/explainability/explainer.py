@@ -225,7 +225,7 @@ class MatchExplainer:
         strengths = self._identify_strengths(feature_importance, shap_explanation)
         gaps = self._identify_gaps(feature_importance, shap_explanation)
         recommendations = self._generate_recommendations(
-            feature_importance, skill_details
+            feature_importance, skill_details, shap=shap_explanation
         )
 
         return MatchExplanation(
@@ -351,7 +351,7 @@ class MatchExplainer:
         importance: FeatureImportanceResult,
     ) -> str:
         """Generate human-readable summary."""
-        score_pct = int(score * 100)
+        score_pct: int = int(score * 100)
 
         # Determine match quality
         if score >= 0.85:
@@ -363,12 +363,29 @@ class MatchExplainer:
         else:
             quality = "poor"
 
-        # Get top contributing factor
-        top_feature = importance.feature_ranking[0] if importance.feature_ranking else "overall profile"
+        # Get top contributing factor with its score
+        top_feature: str = "overall profile"
+        top_feature_pct: str = ""
+        if importance.feature_ranking:
+            top_feature = importance.feature_ranking[0]
+            top_feat_obj = next(
+                (f for f in importance.features if f.feature_name == top_feature),
+                None,
+            )
+            if top_feat_obj:
+                top_feature_pct = f" ({int(top_feat_obj.raw_score * 100)}%)"
+
+        # Mention weakest area if any negative feature exists
+        weak_clause: str = ""
+        negative_features: list[str] = [
+            f.feature_name for f in importance.features if f.direction == "negative"
+        ]
+        if negative_features:
+            weak_clause = f" Weakest area: {negative_features[0]}."
 
         return (
             f"{candidate_name} is a {quality} match ({score_pct}%) for {job_title}. "
-            f"The strongest factor is {top_feature}."
+            f"The strongest factor is {top_feature}{top_feature_pct}.{weak_clause}"
         )
 
     def _identify_strengths(
@@ -376,15 +393,30 @@ class MatchExplainer:
         importance: FeatureImportanceResult,
         shap: Optional[SHAPExplanation],
     ) -> list[str]:
-        """Identify key strengths from explanations."""
-        strengths = []
+        """Identify key strengths. Primary source: SHAP positive contributors.
+        Falls back to feature importance direction when SHAP is unavailable."""
+        strengths: list[str] = []
 
-        # From feature importance
-        for feature in importance.features:
-            if feature.direction == "positive":
-                strengths.append(f"{feature.feature_name}: {feature.description}")
+        if shap is not None:
+            for feature_name, shap_val in shap.get_positive_contributors():
+                matching = next(
+                    (f for f in importance.features if f.feature_name == feature_name),
+                    None,
+                )
+                if matching:
+                    strengths.append(
+                        f"{feature_name}: {matching.description} "
+                        f"(contributes +{shap_val:.2f} above baseline)"
+                    )
+                else:
+                    strengths.append(
+                        f"{feature_name}: above-average contribution (+{shap_val:.2f})"
+                    )
+        else:
+            for feature in importance.features:
+                if feature.direction == "positive":
+                    strengths.append(f"{feature.feature_name}: {feature.description}")
 
-        # Limit to top 5
         return strengths[:5]
 
     def _identify_gaps(
@@ -392,52 +424,73 @@ class MatchExplainer:
         importance: FeatureImportanceResult,
         shap: Optional[SHAPExplanation],
     ) -> list[str]:
-        """Identify key gaps from explanations."""
-        gaps = []
+        """Identify key gaps. Primary source: SHAP negative contributors.
+        Falls back to feature importance direction when SHAP is unavailable."""
+        gaps: list[str] = []
 
-        # From feature importance
-        for feature in importance.features:
-            if feature.direction == "negative":
-                gaps.append(f"{feature.feature_name}: {feature.description}")
+        if shap is not None:
+            for feature_name, shap_val in shap.get_negative_contributors():
+                matching = next(
+                    (f for f in importance.features if f.feature_name == feature_name),
+                    None,
+                )
+                if matching:
+                    gaps.append(
+                        f"{feature_name}: {matching.description} "
+                        f"(contributes {shap_val:.2f} below baseline)"
+                    )
+                else:
+                    gaps.append(
+                        f"{feature_name}: below-average contribution ({shap_val:.2f})"
+                    )
+        else:
+            for feature in importance.features:
+                if feature.direction == "negative":
+                    gaps.append(f"{feature.feature_name}: {feature.description}")
 
-        # Limit to top 5
         return gaps[:5]
 
     def _generate_recommendations(
         self,
         importance: FeatureImportanceResult,
         skill_details: Optional[dict],
+        shap: Optional[SHAPExplanation] = None,
     ) -> list[str]:
-        """Generate actionable recommendations."""
-        recommendations = []
+        """Generate score-specific, actionable recommendations for each weak area."""
+        recommendations: list[str] = []
 
-        # Based on weak areas
         for feature in importance.features:
+            score_pct: int = int(feature.raw_score * 100)
             if feature.raw_score < 0.5:
                 if "skills" in feature.feature_name.lower():
-                    recommendations.append(
-                        "Consider candidates with adjacent skill sets or "
-                        "potential for skill development"
-                    )
+                    if skill_details and skill_details.get("missing_skills"):
+                        missing: list[str] = skill_details["missing_skills"][:3]
+                        recommendations.append(
+                            f"Skills gap ({score_pct}%): candidate is missing "
+                            f"{', '.join(missing)} — assess transferable experience "
+                            "or training potential"
+                        )
+                    else:
+                        recommendations.append(
+                            f"Skills gap ({score_pct}%): evaluate adjacent skill sets "
+                            "or potential for skill development"
+                        )
                 elif "experience" in feature.feature_name.lower():
                     recommendations.append(
-                        "Candidate may benefit from mentorship to bridge "
-                        "experience gap"
+                        f"Experience gap ({score_pct}%): candidate may benefit "
+                        "from mentorship to bridge the experience gap"
                     )
                 elif "education" in feature.feature_name.lower():
                     recommendations.append(
-                        "Consider equivalent work experience in lieu of "
-                        "formal education"
+                        f"Education gap ({score_pct}%): consider equivalent work "
+                        "experience or professional certifications"
+                    )
+                elif "semantic" in feature.feature_name.lower():
+                    recommendations.append(
+                        f"Domain fit ({score_pct}%): candidate's background may not "
+                        "closely align — verify domain knowledge in interview"
                     )
 
-        # Add skill-specific recommendations
-        if skill_details and skill_details.get("missing_skills"):
-            missing = skill_details["missing_skills"][:3]
-            recommendations.append(
-                f"Key skills to assess further: {', '.join(missing)}"
-            )
-
-        # Deduplicate
         return list(dict.fromkeys(recommendations))[:5]
 
 

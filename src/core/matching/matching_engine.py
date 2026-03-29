@@ -988,6 +988,26 @@ class MatchingEngine:
 
         if self.use_explainability and self.explainer:
             try:
+                _skill_details: dict[str, Any] = {
+                    "missing_skills": missing_skills,
+                    "matched_skills": matched_skills,
+                }
+                _experience_details: Optional[dict[str, Any]] = (
+                    {
+                        "meets_minimum": result.experience_match.meets_minimum,
+                        "candidate_years": result.experience_match.candidate_years,
+                        "required_years": result.experience_match.required_years,
+                    }
+                    if result.experience_match else None
+                )
+                _education_details: Optional[dict[str, Any]] = (
+                    {
+                        "meets_requirement": result.education_match.meets_requirement,
+                        "candidate_degree": result.education_match.candidate_degree,
+                        "required_degree": result.education_match.required_degree,
+                    }
+                    if result.education_match else None
+                )
                 detailed_explanation = self.explainer.explain(
                     candidate_name=result.candidate_name,
                     job_title=result.job_title,
@@ -997,9 +1017,16 @@ class MatchingEngine:
                     semantic_score=result.semantic_score,
                     keyword_score=result.keyword_score,
                     overall_score=result.overall_score,
+                    skill_details=_skill_details,
+                    experience_details=_experience_details,
+                    education_details=_education_details,
                 )
                 lime_explanation = detailed_explanation.get_lime_dict()
                 shap_values = detailed_explanation.get_shap_dict()
+                summary = detailed_explanation.summary
+                strengths = detailed_explanation.key_strengths
+                gaps = detailed_explanation.key_gaps
+                recommendations = detailed_explanation.recommendations
             except Exception as e:
                 logger.warning(f"Failed to generate detailed explanation: {e}")
 
