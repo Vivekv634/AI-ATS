@@ -429,7 +429,15 @@ class MatchingEngine:
                     parsed, job
                 )
                 result.semantic_match = semantic_match
-                result.semantic_score = round(semantic_match.overall_similarity, 3)
+                # Use weighted combination of section scores when available;
+                # fall back to overall_similarity for legacy SemanticMatch objects
+                # (those leave weighted_similarity at its default of 0.0).
+                _sem_score: float = (
+                    semantic_match.weighted_similarity
+                    if semantic_match.weighted_similarity > 0.0
+                    else semantic_match.overall_similarity
+                )
+                result.semantic_score = round(_sem_score, 3)
             except Exception as exc:
                 logger.warning(f"compute_similarity_from_parsed failed: {exc}")
                 result.semantic_match = None

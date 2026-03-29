@@ -41,6 +41,11 @@ class SkillMatch(EmbeddedModel):
     partial_match: bool = False  # True if related skill found
     related_skill: Optional[str] = None  # If partial match, what skill matched
 
+    @field_validator("match_score", mode="before")
+    @classmethod
+    def clamp_match_score(cls, v: float) -> float:
+        return max(0.0, min(1.0, float(v)))
+
 
 class ExperienceMatch(EmbeddedModel):
     """Detailed match result for experience requirements."""
@@ -53,6 +58,11 @@ class ExperienceMatch(EmbeddedModel):
     relevant_industries_matched: list[str] = Field(default_factory=list)
     score: float = 0.0  # 0-1 score
 
+    @field_validator("score", mode="before")
+    @classmethod
+    def clamp_score(cls, v: float) -> float:
+        return max(0.0, min(1.0, float(v)))
+
 
 class EducationMatch(EmbeddedModel):
     """Detailed match result for education requirements."""
@@ -64,6 +74,11 @@ class EducationMatch(EmbeddedModel):
     equivalent_experience_used: bool = False
     score: float = 0.0  # 0-1 score
 
+    @field_validator("score", mode="before")
+    @classmethod
+    def clamp_score(cls, v: float) -> float:
+        return max(0.0, min(1.0, float(v)))
+
 
 class SemanticMatch(EmbeddedModel):
     """Results from semantic/embedding-based matching."""
@@ -72,7 +87,18 @@ class SemanticMatch(EmbeddedModel):
     summary_similarity: float = 0.0  # Candidate summary vs job description
     skills_similarity: float = 0.0  # Skills section similarity
     experience_similarity: float = 0.0  # Experience section similarity
+    weighted_similarity: float = 0.0  # Weighted combination of all four section scores
     model_used: str = "all-MiniLM-L6-v2"
+
+    @field_validator(
+        "overall_similarity", "summary_similarity",
+        "skills_similarity", "experience_similarity",
+        "weighted_similarity",
+        mode="before",
+    )
+    @classmethod
+    def clamp_similarity(cls, v: float) -> float:
+        return max(0.0, min(1.0, float(v)))
 
 
 class KeywordMatch(EmbeddedModel):
@@ -107,6 +133,15 @@ class ScoreBreakdown(EmbeddedModel):
     keyword_score: float = 0.0
     keyword_weight: float = 0.05
     keyword_weighted: float = 0.0
+
+    @field_validator(
+        "skills_score", "experience_score", "education_score",
+        "semantic_score", "keyword_score",
+        mode="before",
+    )
+    @classmethod
+    def clamp_component_score(cls, v: float) -> float:
+        return max(0.0, min(1.0, float(v)))
 
     @property
     def total_score(self) -> float:
