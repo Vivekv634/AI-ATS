@@ -315,6 +315,7 @@ class FAISSVectorStore(VectorStore):
 
         self._index = None
         self._id_map: dict[int, str] = {}  # Internal ID -> External ID
+        self._ext_to_internal: dict[str, int] = {}  # External ID -> Internal ID
         self._metadata: dict[str, dict[str, Any]] = {}  # External ID -> Metadata
         self._documents: dict[str, str] = {}  # External ID -> Document
         self._next_id = 0
@@ -356,6 +357,23 @@ class FAISSVectorStore(VectorStore):
             self._initialize()
         return self._index
 
+    def _should_compact(self) -> bool:
+        """Return True when the stale-vector ratio in the FAISS index exceeds 20%.
+
+        Stale vectors are rows that remain in the FAISS index after their IDs
+        have been removed from the external-ID maps.  A ratio above 20 % means
+        the index has grown meaningfully beyond its useful size and a rebuild
+        is worth the cost.
+        """
+        if not self._initialized or self._index is None:
+            return False
+        total: int = self._index.ntotal
+        if total == 0:
+            return False
+        live: int = len(self._id_map)
+        stale_ratio: float = (total - live) / total
+        return stale_ratio > 0.20
+
     def add(
         self,
         ids: list[str],
@@ -366,6 +384,18 @@ class FAISSVectorStore(VectorStore):
         """Add embeddings to the index."""
         if len(ids) == 0:
             return
+
+        # Validate shape/dimension before touching FAISS so callers get a
+        # clear error instead of a cryptic FAISS assertion or silent mismatch.
+        if embeddings.ndim != 2:
+            raise ValueError(
+                f"Embeddings must be a 2D array, got shape {embeddings.shape}"
+            )
+        if embeddings.shape[1] != self.dimension:
+            raise ValueError(
+                f"Embedding dimension mismatch: expected {self.dimension}, "
+                f"got {embeddings.shape[1]}"
+            )
 
         if not self._initialized:
             self._initialize()
@@ -380,6 +410,7 @@ class FAISSVectorStore(VectorStore):
         for i, ext_id in enumerate(ids):
             internal_id = self._next_id + i
             self._id_map[internal_id] = ext_id
+            self._ext_to_internal[ext_id] = internal_id
 
             if metadatas and i < len(metadatas):
                 self._metadata[ext_id] = metadatas[i]
@@ -388,6 +419,45 @@ class FAISSVectorStore(VectorStore):
 
         self._next_id += len(ids)
         logger.debug(f"Added {len(ids)} embeddings to FAISS index")
+
+    def upsert(
+        self,
+        ids: list[str],
+        embeddings: np.ndarray,
+        documents: Optional[list[str]] = None,
+        metadatas: Optional[list[dict[str, Any]]] = None,
+    ) -> None:
+        """Add or update embeddings in the index.
+
+        Compaction is deferred until the stale-vector ratio exceeds 20 %.
+        Until then, searches already skip stale rows via the ID-map lookup,
+        so correctness is maintained without an O(N) rebuild on every update.
+        """
+        if len(ids) == 0:
+            return
+
+        # Validate shape/dimension eagerly — before map mutations or FAISS calls.
+        if embeddings.ndim != 2:
+            raise ValueError(
+                f"Embeddings must be a 2D array, got shape {embeddings.shape}"
+            )
+        if embeddings.shape[1] != self.dimension:
+            raise ValueError(
+                f"Embedding dimension mismatch: expected {self.dimension}, "
+                f"got {embeddings.shape[1]}"
+            )
+
+        if not self._initialized:
+            self._initialize()
+
+        # Remove existing entries for IDs that already exist
+        existing: list[str] = [eid for eid in ids if eid in self._ext_to_internal]
+        if existing:
+            self._remove_from_maps(existing)
+            if self._should_compact():
+                self._compact()
+
+        self.add(ids, embeddings, documents, metadatas)
 
     def search(
         self,
@@ -433,15 +503,68 @@ class FAISSVectorStore(VectorStore):
 
         return results
 
-    def delete(self, ids: list[str]) -> None:
-        """Delete embeddings by ID (marks as deleted, doesn't remove from index)."""
+    def _remove_from_maps(self, ids: list[str]) -> None:
+        """Remove IDs from all mapping dicts (does not touch the FAISS index)."""
         for ext_id in ids:
+            internal_id = self._ext_to_internal.pop(ext_id, None)
+            if internal_id is not None:
+                self._id_map.pop(internal_id, None)
             self._metadata.pop(ext_id, None)
             self._documents.pop(ext_id, None)
-            # Note: FAISS IndexFlatIP doesn't support removal
-            # Would need to rebuild index for true deletion
 
-        logger.debug(f"Marked {len(ids)} embeddings as deleted")
+    def _compact(self) -> None:
+        """
+        Rebuild the FAISS index containing only live (non-deleted) vectors.
+
+        Uses IndexFlatIP.reconstruct() to retrieve each live vector by its
+        current internal row index, then builds a fresh index so that no
+        stale vectors remain.
+        """
+        import faiss
+
+        live_internal_ids = sorted(self._id_map.keys())
+
+        if not live_internal_ids:
+            self._index = faiss.IndexFlatIP(self.dimension)
+            self._next_id = 0
+            return
+
+        # Reconstruct the live vectors from the current index
+        live_vectors = np.array(
+            [self._index.reconstruct(i) for i in live_internal_ids],
+            dtype=np.float32,
+        )
+
+        # Build a fresh index and add the live vectors
+        new_index = faiss.IndexFlatIP(self.dimension)
+        new_index.add(live_vectors)
+
+        # Remap internal IDs to new sequential positions
+        new_id_map: dict[int, str] = {}
+        new_ext_to_internal: dict[str, int] = {}
+        for new_internal, old_internal in enumerate(live_internal_ids):
+            ext_id = self._id_map[old_internal]
+            new_id_map[new_internal] = ext_id
+            new_ext_to_internal[ext_id] = new_internal
+
+        self._index = new_index
+        self._id_map = new_id_map
+        self._ext_to_internal = new_ext_to_internal
+        self._next_id = len(new_id_map)
+        logger.debug(f"Compacted FAISS index: {len(new_id_map)} live vectors")
+
+    def delete(self, ids: list[str]) -> None:
+        """Delete embeddings by ID and rebuild index to remove stale vectors."""
+        if not ids or not self._initialized:
+            return
+
+        to_remove = [eid for eid in ids if eid in self._ext_to_internal]
+        if not to_remove:
+            return
+
+        self._remove_from_maps(to_remove)
+        self._compact()
+        logger.debug(f"Deleted {len(to_remove)} embeddings from FAISS index")
 
     def get(self, ids: list[str]) -> list[dict[str, Any]]:
         """Get metadata by ID."""
@@ -467,6 +590,7 @@ class FAISSVectorStore(VectorStore):
             import faiss
             self._index = faiss.IndexFlatIP(self.dimension)
             self._id_map.clear()
+            self._ext_to_internal.clear()
             self._metadata.clear()
             self._documents.clear()
             self._next_id = 0
@@ -517,6 +641,8 @@ class FAISSVectorStore(VectorStore):
             self._metadata = meta["metadata"]
             self._documents = meta["documents"]
             self._next_id = meta["next_id"]
+            # Rebuild reverse map from loaded id_map
+            self._ext_to_internal = {v: int(k) for k, v in meta["id_map"].items()}
 
         logger.info(f"Loaded FAISS index from {self.persist_path}")
 

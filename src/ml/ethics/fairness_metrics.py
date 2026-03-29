@@ -10,7 +10,7 @@ from typing import Optional
 
 import numpy as np
 
-from src.utils.constants import FAIRNESS_THRESHOLDS
+from src.utils.constants import FAIRNESS_MIN_GROUP_SIZE, FAIRNESS_THRESHOLDS
 from src.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -54,6 +54,7 @@ class FairnessMetrics:
     # Fairness assessment
     is_fair: bool = True
     violations: list[str] = field(default_factory=list)
+    warnings: list[str] = field(default_factory=list)  # Non-fatal issues (e.g. skipped small groups)
     thresholds_used: dict[str, float] = field(default_factory=dict)
 
 
@@ -70,14 +71,22 @@ class FairnessCalculator:
     def __init__(
         self,
         thresholds: Optional[dict[str, float]] = None,
+        min_group_size: int = FAIRNESS_MIN_GROUP_SIZE,
     ):
         """
         Initialize the fairness calculator.
 
         Args:
             thresholds: Custom fairness thresholds. Defaults to config values.
+            min_group_size: Minimum number of candidates a demographic group
+                must contain to be included in metric calculations.  Groups
+                smaller than this are excluded because their selection rates
+                are too noisy to be statistically meaningful (one additional
+                selection/rejection can swing the rate by 20–50 %).
+                Defaults to FAIRNESS_MIN_GROUP_SIZE (5).
         """
         self.thresholds = thresholds or FAIRNESS_THRESHOLDS
+        self.min_group_size = min_group_size
 
     def calculate(
         self,
@@ -106,6 +115,9 @@ class FairnessCalculator:
         scores = np.array(scores)
         group_labels = np.array(group_labels)
 
+        # Track whether outcomes are real labels or score-derived BEFORE conversion
+        _real_outcomes: bool = outcomes is not None
+
         # Determine outcomes
         if outcomes is None:
             outcomes = scores >= selection_threshold
@@ -118,6 +130,33 @@ class FairnessCalculator:
         if len(unique_groups) < 2:
             logger.warning("Less than 2 groups found, cannot calculate fairness metrics")
             return FairnessMetrics(is_fair=True)
+
+        # Filter out groups that are too small to yield reliable statistics.
+        # A single extra selection/rejection in a group of 3 moves its rate by
+        # ~33 %, making any derived fairness metric meaningless.
+        calc_warnings: list[str] = []
+        eligible_groups = []
+        for g in unique_groups:
+            size = int(np.sum(group_labels == g))
+            if size < self.min_group_size:
+                msg = (
+                    f"Group '{g}' has only {size} sample(s) "
+                    f"(minimum required: {self.min_group_size}) — excluded from "
+                    "fairness calculations."
+                )
+                calc_warnings.append(msg)
+                logger.warning(msg)
+            else:
+                eligible_groups.append(g)
+
+        if len(eligible_groups) < 2:
+            logger.warning(
+                "Fewer than 2 groups meet the minimum size requirement "
+                f"({self.min_group_size}); cannot calculate fairness metrics."
+            )
+            return FairnessMetrics(is_fair=True, warnings=calc_warnings)
+
+        unique_groups = np.array(eligible_groups)
 
         # Calculate group-level metrics
         group_metrics = []
@@ -150,9 +189,18 @@ class FairnessCalculator:
         # Calculate Disparate Impact
         di_ratio = self._calculate_disparate_impact(group_positive_rates)
 
-        # Calculate Equalized Odds (simplified - using positive rates)
+        # Equalized odds requires real hiring outcomes to be meaningful.
+        # Warn and zero-out when outcomes were derived from scores.
+        if not _real_outcomes:
+            calc_warnings.append(
+                "Equalized odds requires real hiring outcomes (the `outcomes` argument) "
+                "to be meaningful. When outcomes are derived from scores, TPR/FPR values "
+                "are trivially determined by the threshold and do not measure bias. "
+                "Equalized odds values are set to 0 for this run."
+            )
+
         eo_diff, tpr_diff, fpr_diff = self._calculate_equalized_odds(
-            scores, group_labels, outcomes, unique_groups
+            scores, group_labels, outcomes, unique_groups, selection_threshold, _real_outcomes
         )
 
         # Calculate score distribution metrics
@@ -192,6 +240,7 @@ class FairnessCalculator:
             group_metrics=group_metrics,
             is_fair=len(violations) == 0,
             violations=violations,
+            warnings=calc_warnings,
             thresholds_used=self.thresholds.copy(),
         )
 
@@ -247,57 +296,67 @@ class FairnessCalculator:
         group_labels: np.ndarray,
         outcomes: np.ndarray,
         groups: np.ndarray,
+        selection_threshold: float,
+        real_outcomes: bool,
     ) -> tuple[float, float, float]:
         """
         Calculate equalized odds metrics.
 
-        Equalized odds requires that both TPR and FPR are equal
-        across groups. This is a simplified version that uses
-        score-based predictions.
+        Equalized odds requires that both TPR and FPR are equal across groups.
+        Uses ``scores >= selection_threshold`` as the model's predictions and
+        ``outcomes`` as the true labels (actual hiring decisions).
+
+        Only meaningful when *real* outcomes are provided.  When outcomes are
+        score-derived the caller must pass ``real_outcomes=False`` and this
+        method returns (0.0, 0.0, 0.0) to avoid reporting noise as signal.
+
+        Args:
+            scores: Match scores for all candidates.
+            group_labels: Demographic group label per candidate.
+            outcomes: True labels (actual hired/not-hired decisions).
+            groups: Unique group values to iterate over.
+            selection_threshold: Score threshold used to derive predictions.
+            real_outcomes: False when outcomes were derived from scores rather
+                than actual hiring decisions.
 
         Returns:
             (equalized_odds_diff, tpr_diff, fpr_diff)
         """
-        # For a proper equalized odds calculation, we need ground truth labels
-        # Here we use a simplified approach based on score distributions
+        if not real_outcomes:
+            return 0.0, 0.0, 0.0
 
-        group_tprs = {}
-        group_fprs = {}
+        predicted: np.ndarray = scores >= selection_threshold
+        group_tprs: dict = {}
+        group_fprs: dict = {}
 
         for group in groups:
-            mask = group_labels == group
-            group_scores = scores[mask]
-            group_outcomes = outcomes[mask]
+            mask: np.ndarray = group_labels == group
+            group_predicted: np.ndarray = predicted[mask]
+            group_outcomes: np.ndarray = outcomes[mask]
 
-            # Positive cases: high scores
-            high_score_mask = group_scores >= 0.7
-            # Negative cases: low scores
-            low_score_mask = group_scores < 0.5
+            actual_positives: int = int(np.sum(group_outcomes))
+            actual_negatives: int = int(np.sum(~group_outcomes))
 
-            # TPR approximation: rate of high-scorers who are selected
-            if np.sum(high_score_mask) > 0:
-                tpr = np.sum(group_outcomes[high_score_mask]) / np.sum(high_score_mask)
-            else:
-                tpr = 0
-
-            # FPR approximation: rate of low-scorers who are selected
-            if np.sum(low_score_mask) > 0:
-                fpr = np.sum(group_outcomes[low_score_mask]) / np.sum(low_score_mask)
-            else:
-                fpr = 0
+            # TPR = P(predicted=1 | outcome=1)
+            tpr: float = (
+                float(np.sum(group_predicted & group_outcomes)) / actual_positives
+                if actual_positives > 0 else 0.0
+            )
+            # FPR = P(predicted=1 | outcome=0)
+            fpr: float = (
+                float(np.sum(group_predicted & ~group_outcomes)) / actual_negatives
+                if actual_negatives > 0 else 0.0
+            )
 
             group_tprs[group] = tpr
             group_fprs[group] = fpr
 
-        # Calculate differences
-        tpr_values = list(group_tprs.values())
-        fpr_values = list(group_fprs.values())
+        tpr_values: list[float] = list(group_tprs.values())
+        fpr_values: list[float] = list(group_fprs.values())
 
-        tpr_diff = max(tpr_values) - min(tpr_values) if tpr_values else 0
-        fpr_diff = max(fpr_values) - min(fpr_values) if fpr_values else 0
-
-        # Equalized odds difference is max of TPR and FPR differences
-        eo_diff = max(tpr_diff, fpr_diff)
+        tpr_diff: float = max(tpr_values) - min(tpr_values) if tpr_values else 0.0
+        fpr_diff: float = max(fpr_values) - min(fpr_values) if fpr_values else 0.0
+        eo_diff: float = max(tpr_diff, fpr_diff)
 
         return round(eo_diff, 4), round(tpr_diff, 4), round(fpr_diff, 4)
 
