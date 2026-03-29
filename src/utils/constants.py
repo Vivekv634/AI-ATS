@@ -114,6 +114,13 @@ SKILL_WEAK_PARTIAL_THRESHOLD: Final[float] = 0.60
 EXP_RELEVANCE_TITLE_THRESHOLD: Final[float] = 0.40
 """Cosine similarity >= this value -> experience entry title added to relevant_titles_matched."""
 
+EDU_FIELD_MATCH_THRESHOLD: Final[float] = 0.50
+"""Cosine similarity >= this value -> EducationMatch.field_match = True."""
+
+EDU_FIELD_WEIGHT: Final[float] = 0.40
+"""Weight of field-of-study similarity in the combined education score (0-1).
+The remaining (1 - EDU_FIELD_WEIGHT) is the degree-level score weight."""
+
 
 # =============================================================================
 # Ethical AI Constants

@@ -530,3 +530,88 @@ class TestDomainAwareExperienceScorerIntegration:
         assert 0.0 <= result.overall_score <= 1.0
         assert result.experience_score in {0.5, 1.0}  # no requirement path
         assert result.overall_score > 0.0
+
+
+# ---------------------------------------------------------------------------
+# TestEmbeddingEducationScorerIntegration
+# ---------------------------------------------------------------------------
+
+class TestEmbeddingEducationScorerIntegration:
+    """End-to-end: EmbeddingEducationScorer inside MatchingEngine.match_from_parsed()."""
+
+    def test_education_match_object_populated(self) -> None:
+        """match_from_parsed() returns a non-None EducationMatch with score in [0,1]."""
+        from src.ml.nlp.accurate_resume_parser import AccurateResumeParser, ParsedResume
+        from src.data.models.job import Job, EducationRequirement
+        from src.core.matching.matching_engine import MatchingEngine, MatchResult
+        from src.data.models import EducationMatch
+
+        job: Job = Job(
+            title="Python Backend Engineer",
+            description="Python backend role requiring a bachelor's degree in CS or related field.",
+            responsibilities=["Build APIs", "Write Python services"],
+            company_name="AI Corp",
+            education_requirement=EducationRequirement(minimum_degree="bachelor"),
+        )
+
+        resume_parser: AccurateResumeParser = AccurateResumeParser()
+        parsed_resume: ParsedResume = resume_parser.parse(RESUMES_DIR / "vivek_resume.pdf")
+
+        engine: MatchingEngine = MatchingEngine(use_semantic=False, use_bias_detection=False)
+        result: MatchResult = engine.match_from_parsed(parsed_resume, job)
+
+        assert result.education_match is not None
+        edu: EducationMatch = result.education_match
+        assert 0.0 <= edu.score <= 1.0
+        assert edu.required_degree == "bachelor"
+        assert 0.0 <= result.education_score <= 1.0
+
+    def test_field_match_flag_is_bool(self) -> None:
+        """EducationMatch.field_match is a bool (True or False, never None)."""
+        from src.ml.nlp.accurate_resume_parser import AccurateResumeParser, ParsedResume
+        from src.data.models.job import Job, EducationRequirement
+        from src.core.matching.matching_engine import MatchingEngine, MatchResult
+        from src.data.models import EducationMatch
+
+        job: Job = Job(
+            title="Machine Learning Engineer",
+            description="ML engineering role with Python and data science background preferred.",
+            responsibilities=["Build ML pipelines", "Train and evaluate models"],
+            company_name="AI Corp",
+            education_requirement=EducationRequirement(minimum_degree="bachelor"),
+        )
+
+        resume_parser: AccurateResumeParser = AccurateResumeParser()
+        parsed_resume: ParsedResume = resume_parser.parse(RESUMES_DIR / "vivek_resume.pdf")
+
+        engine: MatchingEngine = MatchingEngine(use_semantic=False, use_bias_detection=False)
+        result: MatchResult = engine.match_from_parsed(parsed_resume, job)
+
+        assert result.education_match is not None
+        edu: EducationMatch = result.education_match
+        assert isinstance(edu.field_match, bool)
+
+    def test_overall_score_includes_education_component(self) -> None:
+        """overall_score is positive and the education component score is in [0,1]."""
+        from src.ml.nlp.accurate_resume_parser import AccurateResumeParser, ParsedResume
+        from src.data.models.job import Job
+        from src.core.matching.matching_engine import MatchingEngine, MatchResult
+
+        job: Job = Job(
+            title="Software Engineer",
+            description="General software engineering role.",
+            responsibilities=["write code", "review PRs"],
+            company_name="AI Corp",
+        )
+
+        resume_parser: AccurateResumeParser = AccurateResumeParser()
+        parsed_resume: ParsedResume = resume_parser.parse(RESUMES_DIR / "vivek_resume.pdf")
+
+        engine: MatchingEngine = MatchingEngine(use_semantic=False, use_bias_detection=False)
+        result: MatchResult = engine.match_from_parsed(parsed_resume, job)
+
+        assert 0.0 <= result.overall_score <= 1.0
+        assert result.overall_score > 0.0
+        assert 0.0 <= result.education_score <= 1.0
+        # No education requirement → score = 1.0 (has degree) or 0.7 (no degree)
+        assert result.education_score in {0.7, 1.0}
