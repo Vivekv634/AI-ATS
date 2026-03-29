@@ -61,7 +61,9 @@ class MatchingWorker(QObject):
             from src.core.matching import get_matching_engine
             from src.data.models.job import Job, SkillRequirement
 
+            from src.core.ranking import rank_candidates, RankingConfig
             results: list[dict] = []
+            match_results_list: list = []
             total: int = len(self.resume_files)
 
             # ── Initialise ──────────────────────────────────────────────────
@@ -119,6 +121,7 @@ class MatchingWorker(QObject):
 
                     # Run matching via new typed pipeline
                     match_result = matching_engine.match_from_parsed(parsed, job_for_matching)
+                    match_results_list.append(match_result)
 
                     # Candidate name
                     name: str = parsed.contact.name or "Unknown Candidate"
@@ -180,10 +183,21 @@ class MatchingWorker(QObject):
                     print(f"Error processing {resume_file}: {e}")
                     continue
 
-            # Sort by score descending and add ranks
-            results.sort(key=lambda x: x["score"], reverse=True)
-            for i, r in enumerate(results):
-                r["rank"] = str(i + 1)
+            # Rank using CandidateRanker + FairnessReranker
+            ranking_config = RankingConfig(fairness_mode="flag")
+            ranked = rank_candidates(match_results_list, ranking_config)
+
+            # Map RankedResult back to the existing dict format (1:1 by object identity)
+            mr_to_dict: dict[int, dict] = {
+                id(mr): d for mr, d in zip(match_results_list, results)
+            }
+            final_results: list[dict] = []
+            for rr in ranked:
+                d = mr_to_dict[id(rr.match_result)]
+                d["rank"] = str(rr.rank)
+                d["fairness_flags"] = rr.fairness_flags
+                final_results.append(d)
+            results = final_results
 
             self.progress.emit(100, "Matching complete!")
             self.finished.emit(results)
