@@ -150,7 +150,7 @@ class DashboardView(BaseView):
                 font-weight: 500;
             }}
             QPushButton:hover {{
-                background-color: #16a34a;
+                background-color: {COLORS['success_dark']};
             }}
         """)
         import_btn.clicked.connect(lambda: self.navigate_to_view.emit(1))
@@ -161,7 +161,7 @@ class DashboardView(BaseView):
         match_btn.setMinimumHeight(44)
         match_btn.setStyleSheet(f"""
             QPushButton {{
-                background-color: #8b5cf6;
+                background-color: {COLORS['accent']};
                 color: white;
                 border: none;
                 border-radius: 6px;
@@ -169,7 +169,7 @@ class DashboardView(BaseView):
                 font-weight: 500;
             }}
             QPushButton:hover {{
-                background-color: #7c3aed;
+                background-color: {COLORS['accent_dark']};
             }}
         """)
         match_btn.clicked.connect(lambda: self.navigate_to_view.emit(3))
@@ -325,7 +325,7 @@ class DashboardView(BaseView):
             self.interviews_card.set_value(str(interview_count))
 
         except Exception as e:
-            print(f"Error loading dashboard stats: {e}")
+            logger.error(f"Error loading dashboard stats: {e}")
             self.jobs_card.set_value("0")
             self.candidates_card.set_value("0")
             self.matches_card.set_value("0")

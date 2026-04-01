@@ -189,5 +189,60 @@ def reload_settings() -> AppSettings:
     return _settings
 
 
+def write_env_settings(updates: dict[str, str], env_file: Path | None = None) -> None:
+    """
+    Persist key=value pairs to the .env file without destroying comments.
+
+    Algorithm:
+      1. Read every existing line.
+      2. For each line that matches ``KEY=...``, replace the value if KEY
+         appears in *updates*.  Track which keys were handled.
+      3. Append any keys from *updates* that were not already present.
+      4. Write the result back atomically via a temp file + rename so a
+         crash mid-write never leaves a truncated .env.
+
+    Args:
+        updates: Mapping of env-var name → new string value.
+        env_file: Path to .env file; defaults to the project root .env.
+    """
+    import re
+    import tempfile
+
+    target: Path = env_file or (ROOT_DIR / ".env")
+
+    # Read existing lines (create empty file if missing)
+    if target.exists():
+        lines: list[str] = target.read_text(encoding="utf-8").splitlines(keepends=True)
+    else:
+        lines = []
+
+    remaining: dict[str, str] = dict(updates)
+    new_lines: list[str] = []
+
+    for line in lines:
+        # Match uncommented KEY=value lines
+        m = re.match(r'^([A-Z][A-Z0-9_]*)=', line)
+        if m:
+            key = m.group(1)
+            if key in remaining:
+                # Replace value, preserve trailing newline
+                eol = "\n" if not line.endswith("\n") else ""
+                new_lines.append(f"{key}={remaining.pop(key)}{eol}\n".rstrip("\n\n") + "\n")
+                continue
+        new_lines.append(line)
+
+    # Append keys that had no existing line
+    if remaining:
+        if new_lines and not new_lines[-1].endswith("\n"):
+            new_lines.append("\n")
+        for key, value in remaining.items():
+            new_lines.append(f"{key}={value}\n")
+
+    # Atomic write via temp file in the same directory
+    tmp = target.with_suffix(".env.tmp")
+    tmp.write_text("".join(new_lines), encoding="utf-8")
+    tmp.replace(target)
+
+
 # Convenience exports
 settings = get_settings()

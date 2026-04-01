@@ -9,14 +9,6 @@ from src.ml.nlp.jd_parser import JDParser, JDParseResult
 
 @pytest.fixture
 def parser():
-    try:
-        import spacy as _spacy  # noqa: F401
-    except Exception:
-        pytest.skip(
-            "spaCy is not functional in this Python environment "
-            "(pydantic v1 incompatibility on Python 3.14). "
-            "Use Python <=3.13 to run these tests."
-        )
     return JDParser()
 
 

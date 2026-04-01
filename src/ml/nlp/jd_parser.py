@@ -143,7 +143,10 @@ class JDParser:
         try:
             import spacy
             spacy.prefer_gpu()
-        except ImportError:
+        except Exception:
+            # spaCy is optional — used only as a GPU-acceleration hint.
+            # On Python 3.14 it raises pydantic.v1.errors.ConfigError, not
+            # ImportError, so we catch all exceptions to stay portable.
             pass
         self.skills_parser = SkillsParser()
         self._build_skill_set()

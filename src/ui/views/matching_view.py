@@ -180,7 +180,8 @@ class MatchingWorker(QObject):
                     })
 
                 except Exception as e:
-                    print(f"Error processing {resume_file}: {e}")
+                    from src.utils.logger import get_logger
+                    get_logger(__name__).warning(f"Error processing {resume_file}: {e}")
                     continue
 
             # Rank using CandidateRanker + FairnessReranker
@@ -330,8 +331,9 @@ class MatchingView(BaseView):
         self.job_combo.setMinimumHeight(36)
         self.job_combo.setStyleSheet(f"""
             QComboBox {{
-                background-color: {COLORS['surface']};
-                border: 1px solid #e2e8f0;
+                background-color: {COLORS['surface_elevated']};
+                color: {COLORS['text_primary']};
+                border: 1px solid {COLORS['border_muted']};
                 border-radius: 6px;
                 padding: 8px 12px;
             }}
@@ -397,7 +399,7 @@ class MatchingView(BaseView):
         self.progress_bar.setTextVisible(False)
         self.progress_bar.setStyleSheet(f"""
             QProgressBar {{
-                background-color: #e2e8f0;
+                background-color: {COLORS['surface_overlay']};
                 border: none;
                 border-radius: 4px;
             }}
@@ -503,8 +505,9 @@ class MatchingView(BaseView):
         self.explanation_text.setMinimumHeight(150)
         self.explanation_text.setStyleSheet(f"""
             QTextEdit {{
-                background-color: {COLORS['surface']};
-                border: 1px solid #e2e8f0;
+                background-color: {COLORS['surface_elevated']};
+                color: {COLORS['text_primary']};
+                border: 1px solid {COLORS['border_subtle']};
                 border-radius: 8px;
                 padding: 12px;
                 font-size: 13px;
@@ -532,7 +535,7 @@ class MatchingView(BaseView):
 
         self.bias_status = QLabel("✓ No bias indicators detected")
         self.bias_status.setStyleSheet(f"""
-            background-color: #dcfce7;
+            background-color: {COLORS['success']}22;
             color: {COLORS['success']};
             padding: 12px;
             border-radius: 6px;
@@ -697,7 +700,7 @@ class MatchingView(BaseView):
         if result_data.get("bias_detected"):
             self.bias_status.setText(f"⚠ {result_data.get('bias_info', 'Potential bias indicators detected')}")
             self.bias_status.setStyleSheet(f"""
-                background-color: #fef3c7;
+                background-color: {COLORS['warning']}22;
                 color: {COLORS['warning']};
                 padding: 12px;
                 border-radius: 6px;
@@ -706,7 +709,7 @@ class MatchingView(BaseView):
         else:
             self.bias_status.setText("✓ No bias indicators detected")
             self.bias_status.setStyleSheet(f"""
-                background-color: #dcfce7;
+                background-color: {COLORS['success']}22;
                 color: {COLORS['success']};
                 padding: 12px;
                 border-radius: 6px;

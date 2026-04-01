@@ -226,11 +226,13 @@ COLORS: Final[dict[str, str]] = {
     "primary_dark":     "#1D6FCC",   # Pressed/deep state
     "primary_glow":     "#1A3A6E",   # Subtle glow bg behind primary elements
     "accent":           "#7C6AF7",   # Indigo accent — used on AI/ML badges
+    "accent_dark":      "#6352E8",   # Pressed/hover accent state
     "accent_dim":       "#2A2456",   # Dimmed accent background
     "secondary":        "#8B949E",   # Neutral label colour
 
     # ── Status ─────────────────────────────────────────────────────────────────
     "success":          "#2EA043",   # GitHub-green — pass, hired, high score
+    "success_dark":     "#238636",   # Pressed/hover success state
     "success_dim":      "#1A3A28",   # Dim success background
     "warning":          "#D29922",   # Amber — partial match, caution
     "warning_dim":      "#3A2E10",   # Dim warning background

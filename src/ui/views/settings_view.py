@@ -59,13 +59,13 @@ class SettingsView(BaseView):
         tabs = QTabWidget()
         tabs.setStyleSheet(f"""
             QTabWidget::pane {{
-                border: 1px solid #e2e8f0;
+                border: 1px solid {COLORS['border_subtle']};
                 border-radius: 8px;
                 background-color: {COLORS['surface']};
                 padding: 16px;
             }}
             QTabBar::tab {{
-                background-color: #f1f5f9;
+                background-color: {COLORS['surface_elevated']};
                 color: {COLORS['text_secondary']};
                 padding: 10px 20px;
                 margin-right: 4px;
@@ -78,7 +78,7 @@ class SettingsView(BaseView):
                 font-weight: 500;
             }}
             QTabBar::tab:hover {{
-                background-color: #e2e8f0;
+                background-color: {COLORS['surface_overlay']};
             }}
         """)
 
@@ -380,7 +380,7 @@ class SettingsView(BaseView):
                 font-weight: 600;
                 font-size: 13px;
                 color: {COLORS['text_primary']};
-                border: 1px solid #e2e8f0;
+                border: 1px solid {COLORS['border_subtle']};
                 border-radius: 8px;
                 margin-top: 12px;
                 padding: 16px;
@@ -390,15 +390,32 @@ class SettingsView(BaseView):
                 subcontrol-origin: margin;
                 left: 16px;
                 padding: 0 8px;
+                background-color: {COLORS['surface']};
             }}
             QLineEdit, QSpinBox, QDoubleSpinBox, QComboBox {{
-                background-color: {COLORS['surface']};
-                border: 1px solid #e2e8f0;
+                background-color: {COLORS['surface_elevated']};
+                color: {COLORS['text_primary']};
+                border: 1px solid {COLORS['border_muted']};
                 border-radius: 6px;
                 padding: 6px 10px;
                 min-height: 28px;
             }}
             QLineEdit:focus, QSpinBox:focus, QDoubleSpinBox:focus, QComboBox:focus {{
+                border-color: {COLORS['primary']};
+            }}
+            QCheckBox {{
+                color: {COLORS['text_primary']};
+                spacing: 8px;
+            }}
+            QCheckBox::indicator {{
+                width: 16px;
+                height: 16px;
+                border-radius: 4px;
+                border: 1px solid {COLORS['border_muted']};
+                background-color: {COLORS['surface_elevated']};
+            }}
+            QCheckBox::indicator:checked {{
+                background-color: {COLORS['primary']};
                 border-color: {COLORS['primary']};
             }}
         """
@@ -453,7 +470,8 @@ class SettingsView(BaseView):
             )
 
         except Exception as e:
-            print(f"Error loading settings: {e}")
+            from src.utils.logger import get_logger
+            get_logger(__name__).error(f"Error loading settings: {e}")
 
     def _save_settings(self):
         """Save current settings to environment and reload."""
@@ -475,40 +493,48 @@ class SettingsView(BaseView):
             return
 
         import os
+        from src.utils.config import reload_settings, write_env_settings
 
-        # UI settings
         theme_values = ["light", "dark", "system"]
-        os.environ["UI_THEME"] = theme_values[self.theme_combo.currentIndex()]
-        os.environ["UI_FONT_SIZE"] = str(self.font_size_spin.value())
-        os.environ["UI_WINDOW_WIDTH"] = str(self.width_spin.value())
-        os.environ["UI_WINDOW_HEIGHT"] = str(self.height_spin.value())
-
-        # Database settings
-        os.environ["DB_HOST"] = self.db_host_input.text().strip()
-        os.environ["DB_PORT"] = str(self.db_port_spin.value())
-        os.environ["DB_NAME"] = self.db_name_input.text().strip()
-        if self.db_user_input.text().strip():
-            os.environ["DB_USERNAME"] = self.db_user_input.text().strip()
-        if self.db_pass_input.text().strip():
-            os.environ["DB_PASSWORD"] = self.db_pass_input.text().strip()
-
-        # ML settings
         model_values = [
             "sentence-transformers/all-MiniLM-L6-v2",
             "sentence-transformers/all-mpnet-base-v2",
             "sentence-transformers/all-MiniLM-L12-v2",
         ]
-        os.environ["ML_EMBEDDING_MODEL"] = model_values[self.embedding_model_combo.currentIndex()]
         device_values = ["auto", "cpu", "cuda", "mps"]
-        os.environ["ML_DEVICE"] = device_values[self.embedding_device_combo.currentIndex()]
-
-        # Vector store
         provider_values = ["chromadb", "faiss"]
-        os.environ["VECTOR_PROVIDER"] = provider_values[self.vector_provider_combo.currentIndex()]
 
-        # Reload settings singleton
+        # Build the full env update dict
+        env_updates: dict[str, str] = {
+            "UI_THEME":            theme_values[self.theme_combo.currentIndex()],
+            "UI_FONT_SIZE":        str(self.font_size_spin.value()),
+            "UI_WINDOW_WIDTH":     str(self.width_spin.value()),
+            "UI_WINDOW_HEIGHT":    str(self.height_spin.value()),
+            "DB_HOST":             self.db_host_input.text().strip(),
+            "DB_PORT":             str(self.db_port_spin.value()),
+            "DB_NAME":             self.db_name_input.text().strip(),
+            "ML_EMBEDDING_MODEL":  model_values[self.embedding_model_combo.currentIndex()],
+            "ML_DEVICE":           device_values[self.embedding_device_combo.currentIndex()],
+            "VECTOR_PROVIDER":     provider_values[self.vector_provider_combo.currentIndex()],
+        }
+        if self.db_user_input.text().strip():
+            env_updates["DB_USERNAME"] = self.db_user_input.text().strip()
+        if self.db_pass_input.text().strip():
+            env_updates["DB_PASSWORD"] = self.db_pass_input.text().strip()
+
+        # 1. Write to .env for persistence across restarts
         try:
-            from src.utils.config import reload_settings
+            write_env_settings(env_updates)
+        except Exception as e:
+            QMessageBox.warning(self, "Error", f"Could not write settings file: {e}")
+            return
+
+        # 2. Apply to current process environment so the reload picks them up
+        for key, value in env_updates.items():
+            os.environ[key] = value
+
+        # 3. Reload settings singleton
+        try:
             reload_settings()
         except Exception as e:
             QMessageBox.warning(self, "Error", f"Could not reload settings: {e}")

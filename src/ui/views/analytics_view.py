@@ -71,7 +71,7 @@ class BarChart(QWidget):
         height = self.height()
 
         # Background
-        painter.fillRect(0, 0, width, height, QColor(COLORS["surface"]))
+        painter.fillRect(0, 0, width, height, QColor(COLORS["surface_elevated"]))
 
         if not self.data:
             return
@@ -107,7 +107,7 @@ class BarChart(QWidget):
             painter.drawText(5, int(y) + 4, 50, 20, Qt.AlignmentFlag.AlignRight, str(value))
 
             # Grid line
-            painter.setPen(QPen(QColor("#e2e8f0"), 1, Qt.PenStyle.DashLine))
+            painter.setPen(QPen(QColor(COLORS["border_subtle"]), 1, Qt.PenStyle.DashLine))
             painter.drawLine(left_margin, int(y), width - right_margin, int(y))
             painter.setPen(QColor(COLORS["text_secondary"]))
 
@@ -208,7 +208,7 @@ class DonutChart(QWidget):
         height = self.height()
 
         # Background
-        painter.fillRect(0, 0, width, height, QColor(COLORS["surface"]))
+        painter.fillRect(0, 0, width, height, QColor(COLORS["surface_elevated"]))
 
         if not self.data:
             return
@@ -256,7 +256,7 @@ class DonutChart(QWidget):
         # Draw inner circle to create donut effect
         center_x = chart_x + chart_size / 2
         center_y = chart_y + chart_size / 2
-        painter.setBrush(QBrush(QColor(COLORS["surface"])))
+        painter.setBrush(QBrush(QColor(COLORS["surface_elevated"])))
         painter.setPen(Qt.PenStyle.NoPen)
         painter.drawEllipse(
             int(center_x - inner_radius),
@@ -358,7 +358,7 @@ class HorizontalBarChart(QWidget):
         height = self.height()
 
         # Background
-        painter.fillRect(0, 0, width, height, QColor(COLORS["surface"]))
+        painter.fillRect(0, 0, width, height, QColor(COLORS["surface_elevated"]))
 
         if not self.data:
             return
@@ -398,7 +398,7 @@ class HorizontalBarChart(QWidget):
             )
 
             # Background bar
-            painter.setBrush(QBrush(QColor("#e2e8f0")))
+            painter.setBrush(QBrush(QColor(COLORS["surface_overlay"])))
             painter.setPen(Qt.PenStyle.NoPen)
             painter.drawRoundedRect(
                 left_margin, int(y),
@@ -617,8 +617,9 @@ class AnalyticsView(BaseView):
         self.period_combo.setMinimumWidth(140)
         self.period_combo.setStyleSheet(f"""
             QComboBox {{
-                background-color: {COLORS['surface']};
-                border: 1px solid #e2e8f0;
+                background-color: {COLORS['surface_elevated']};
+                color: {COLORS['text_primary']};
+                border: 1px solid {COLORS['border_muted']};
                 border-radius: 6px;
                 padding: 8px 12px;
             }}
@@ -688,8 +689,8 @@ class AnalyticsView(BaseView):
         card = QFrame()
         card.setStyleSheet(f"""
             QFrame {{
-                background-color: {COLORS['surface']};
-                border: 1px solid #e2e8f0;
+                background-color: {COLORS['surface_elevated']};
+                border: 1px solid {COLORS['border_subtle']};
                 border-radius: 8px;
             }}
         """)
@@ -766,8 +767,8 @@ class AnalyticsView(BaseView):
         self.job_perf_card = QFrame()
         self.job_perf_card.setStyleSheet(f"""
             QFrame {{
-                background-color: {COLORS['surface']};
-                border: 1px solid #e2e8f0;
+                background-color: {COLORS['surface_elevated']};
+                border: 1px solid {COLORS['border_subtle']};
                 border-radius: 8px;
             }}
         """)
@@ -793,7 +794,7 @@ class AnalyticsView(BaseView):
 
         # Table header
         header_widget = QWidget()
-        header_widget.setStyleSheet("background-color: #f8fafc;")
+        header_widget.setStyleSheet(f"background-color: {COLORS['surface_overlay']};")
         header_row = QHBoxLayout(header_widget)
         header_row.setContentsMargins(16, 12, 16, 12)
 
@@ -821,13 +822,13 @@ class AnalyticsView(BaseView):
 
         for job in job_data:
             row_widget = QWidget()
-            row_widget.setStyleSheet("""
-                QWidget {
-                    border-bottom: 1px solid #e2e8f0;
-                }
-                QWidget:hover {
-                    background-color: #f8fafc;
-                }
+            row_widget.setStyleSheet(f"""
+                QWidget {{
+                    border-bottom: 1px solid {COLORS['border_subtle']};
+                }}
+                QWidget:hover {{
+                    background-color: {COLORS['surface_overlay']};
+                }}
             """)
             row = QHBoxLayout(row_widget)
             row.setContentsMargins(16, 12, 16, 12)
@@ -1031,4 +1032,5 @@ class AnalyticsView(BaseView):
                 self._populate_job_performance([])
 
         except Exception as e:
-            print(f"Error loading analytics: {e}")
+            from src.utils.logger import get_logger
+            get_logger(__name__).error(f"Error loading analytics: {e}")

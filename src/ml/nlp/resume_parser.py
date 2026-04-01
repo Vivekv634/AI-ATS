@@ -116,7 +116,10 @@ class ResumeParser:
         try:
             import spacy
             spacy.prefer_gpu()
-        except ImportError:
+        except Exception:
+            # spaCy is optional — used only as a GPU-acceleration hint.
+            # On Python 3.14 it raises pydantic.v1.errors.ConfigError, not
+            # ImportError, so we catch all exceptions to stay portable.
             pass
         self.preprocessor = TextPreprocessor()
         self.contact_parser = ContactParser()
