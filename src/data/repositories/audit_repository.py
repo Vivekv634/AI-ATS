@@ -5,7 +5,7 @@ Provides data access operations for audit log documents,
 supporting compliance, transparency, and system monitoring.
 """
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
 from bson import ObjectId
@@ -655,7 +655,7 @@ class AuditRepository(BaseRepository[AuditLog]):
                             "$created_at",
                             {
                                 "$subtract": [
-                                    datetime.utcnow(),
+                                    datetime.now(timezone.utc),
                                     {"$multiply": ["$retention_period_days", 86400000]},
                                 ]
                             },
@@ -687,7 +687,7 @@ class AuditRepository(BaseRepository[AuditLog]):
                             "$created_at",
                             {
                                 "$subtract": [
-                                    datetime.utcnow(),
+                                    datetime.now(timezone.utc),
                                     {"$multiply": ["$retention_period_days", 86400000]},
                                 ]
                             },

@@ -6,7 +6,7 @@ including search, filtering, and analytics capabilities.
 """
 from __future__ import annotations
 
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 from typing import Any, Optional
 
 from bson import ObjectId
@@ -149,7 +149,7 @@ class JobRepository(BaseRepository[Job]):
             id_value,
             {
                 "status": JobStatus.OPEN.value,
-                "posted_date": datetime.utcnow(),
+                "posted_date": datetime.now(timezone.utc),
             },
         )
 
@@ -159,7 +159,7 @@ class JobRepository(BaseRepository[Job]):
             id_value,
             {
                 "status": JobStatus.OPEN.value,
-                "posted_date": datetime.utcnow(),
+                "posted_date": datetime.now(timezone.utc),
             },
         )
 

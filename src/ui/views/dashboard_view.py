@@ -351,7 +351,7 @@ class DashboardView(BaseView):
                 logs = audit_repo.find(
                     {}, limit=5, sort_by="created_at", sort_order=-1
                 )
-                from datetime import datetime
+                from datetime import datetime, timezone
                 for log in logs:
                     action = getattr(log, "action", "")
                     details = getattr(log, "action_description", "") or ""
@@ -360,7 +360,11 @@ class DashboardView(BaseView):
                     # Format relative time
                     time_str = ""
                     if created:
-                        delta = datetime.utcnow() - created
+                        now = datetime.now(timezone.utc)
+                        # Ensure created is timezone-aware for comparison
+                        if created.tzinfo is None:
+                            created = created.replace(tzinfo=timezone.utc)
+                        delta = now - created
                         if delta.days > 0:
                             time_str = f"{delta.days}d ago"
                         elif delta.seconds > 3600:

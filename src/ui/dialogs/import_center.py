@@ -129,7 +129,7 @@ class DropZone(QFrame):
         self.setStyleSheet(f"""
             QFrame {{
                 background-color: {COLORS['surface']};
-                border: 2px dashed #cbd5e1;
+                border: 2px dashed COLORS['border_muted'];
                 border-radius: 12px;
             }}
             QFrame:hover {{
@@ -273,12 +273,12 @@ class LocalImportTab(QWidget):
         self.files_list.setStyleSheet(f"""
             QListWidget {{
                 background-color: {COLORS['surface']};
-                border: 1px solid #e2e8f0;
+                border: 1px solid COLORS['border_subtle'];
                 border-radius: 6px;
             }}
             QListWidget::item {{
                 padding: 8px;
-                border-bottom: 1px solid #f1f5f9;
+                border-bottom: 1px solid COLORS['surface_elevated'];
             }}
             QListWidget::item:selected {{
                 background-color: #e0e7ff;
@@ -314,7 +314,7 @@ class LocalImportTab(QWidget):
                 background-color: #1d4ed8;
             }}
             QPushButton:disabled {{
-                background-color: #cbd5e1;
+                background-color: COLORS['border_muted'];
             }}
         """)
         self.import_btn.clicked.connect(self._import_files)
@@ -399,7 +399,7 @@ class GoogleDriveTab(QWidget):
         self.status_frame = QFrame()
         self.status_frame.setStyleSheet(f"""
             QFrame {{
-                background-color: #fef3c7;
+                background-color: COLORS['warning'] + '22';
                 border: 1px solid #fcd34d;
                 border-radius: 8px;
                 padding: 12px;
@@ -491,7 +491,7 @@ class GoogleDriveTab(QWidget):
         self.folders_tree.setStyleSheet(f"""
             QTreeWidget {{
                 background-color: {COLORS['surface']};
-                border: 1px solid #e2e8f0;
+                border: 1px solid COLORS['border_subtle'];
                 border-radius: 6px;
             }}
         """)
@@ -513,7 +513,7 @@ class GoogleDriveTab(QWidget):
         self.files_table.setStyleSheet(f"""
             QTableWidget {{
                 background-color: {COLORS['surface']};
-                border: 1px solid #e2e8f0;
+                border: 1px solid COLORS['border_subtle'];
                 border-radius: 6px;
             }}
         """)
@@ -550,7 +550,7 @@ class GoogleDriveTab(QWidget):
                 background-color: #1d4ed8;
             }}
             QPushButton:disabled {{
-                background-color: #cbd5e1;
+                background-color: COLORS['border_muted'];
             }}
         """)
         self.import_gdrive_btn.clicked.connect(self._import_selected)
@@ -767,7 +767,7 @@ class GoogleSheetsTab(QWidget):
         info_frame = QFrame()
         info_frame.setStyleSheet(f"""
             QFrame {{
-                background-color: #eff6ff;
+                background-color: COLORS['primary_glow'];
                 border: 1px solid #bfdbfe;
                 border-radius: 8px;
                 padding: 16px;
@@ -844,7 +844,7 @@ class GoogleSheetsTab(QWidget):
         self.preview_table.setStyleSheet(f"""
             QTableWidget {{
                 background-color: {COLORS['surface']};
-                border: 1px solid #e2e8f0;
+                border: 1px solid COLORS['border_subtle'];
                 border-radius: 6px;
             }}
         """)
@@ -889,7 +889,7 @@ class GoogleSheetsTab(QWidget):
                 background-color: #1d4ed8;
             }}
             QPushButton:disabled {{
-                background-color: #cbd5e1;
+                background-color: COLORS['border_muted'];
             }}
         """)
         self.import_meta_btn.clicked.connect(self._import_metadata)
@@ -1016,7 +1016,7 @@ class ImportCenterDialog(QDialog):
         header.setStyleSheet(f"""
             QFrame {{
                 background-color: {COLORS['surface']};
-                border-bottom: 1px solid #e2e8f0;
+                border-bottom: 1px solid COLORS['border_subtle'];
             }}
         """)
         header_layout = QHBoxLayout(header)
@@ -1040,7 +1040,7 @@ class ImportCenterDialog(QDialog):
                 color: #64748b;
             }
             QPushButton:hover {
-                background-color: #f1f5f9;
+                background-color: COLORS['surface_elevated'];
                 border-radius: 4px;
             }
         """)
@@ -1069,7 +1069,7 @@ class ImportCenterDialog(QDialog):
                 font-weight: bold;
             }}
             QTabBar::tab:hover {{
-                background-color: #f1f5f9;
+                background-color: COLORS['surface_elevated'];
             }}
         """)
 
@@ -1096,7 +1096,7 @@ class ImportCenterDialog(QDialog):
         self.progress_frame.setStyleSheet(f"""
             QFrame {{
                 background-color: {COLORS['surface']};
-                border-top: 1px solid #e2e8f0;
+                border-top: 1px solid COLORS['border_subtle'];
             }}
         """)
         progress_layout = QVBoxLayout(self.progress_frame)
@@ -1109,7 +1109,7 @@ class ImportCenterDialog(QDialog):
         self.progress_bar.setStyleSheet(f"""
             QProgressBar {{
                 border: none;
-                background-color: #e2e8f0;
+                background-color: COLORS['border_subtle'];
                 border-radius: 4px;
                 height: 8px;
             }}
@@ -1127,7 +1127,7 @@ class ImportCenterDialog(QDialog):
         self.footer.setStyleSheet(f"""
             QFrame {{
                 background-color: {COLORS['surface']};
-                border-top: 1px solid #e2e8f0;
+                border-top: 1px solid COLORS['border_subtle'];
             }}
         """)
         footer_layout = QHBoxLayout(self.footer)

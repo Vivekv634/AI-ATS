@@ -5,7 +5,7 @@ Provides data access operations for resume documents,
 including file tracking and processing status management.
 """
 
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Optional
 
 from bson import ObjectId
@@ -251,7 +251,7 @@ class ResumeRepository(BaseRepository[Resume]):
             "stage": error_stage,
             "error_type": error_type,
             "error_message": error_message,
-            "occurred_at": datetime.utcnow(),
+            "occurred_at": datetime.now(timezone.utc),
             "is_recoverable": False,
         }
         collection.update_one(
@@ -259,7 +259,7 @@ class ResumeRepository(BaseRepository[Resume]):
             {
                 "$set": {
                     "status": ProcessingStatus.FAILED.value,
-                    "updated_at": datetime.utcnow(),
+                    "updated_at": datetime.now(timezone.utc),
                 },
                 "$push": {"processing_errors": error},
             },
@@ -279,7 +279,7 @@ class ResumeRepository(BaseRepository[Resume]):
             "stage": error_stage,
             "error_type": error_type,
             "error_message": error_message,
-            "occurred_at": datetime.utcnow(),
+            "occurred_at": datetime.now(timezone.utc),
             "is_recoverable": False,
         }
         await collection.update_one(
@@ -287,7 +287,7 @@ class ResumeRepository(BaseRepository[Resume]):
             {
                 "$set": {
                     "status": ProcessingStatus.FAILED.value,
-                    "updated_at": datetime.utcnow(),
+                    "updated_at": datetime.now(timezone.utc),
                 },
                 "$push": {"processing_errors": error},
             },

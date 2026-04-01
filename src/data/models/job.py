@@ -5,7 +5,7 @@ Defines the schema for job postings, including requirements,
 qualifications, and matching criteria.
 """
 
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 from enum import Enum
 from typing import Optional
 
@@ -241,13 +241,16 @@ class Job(BaseDocument):
         """Calculate days since job was posted."""
         if not self.posted_date:
             return None
-        delta = datetime.utcnow() - self.posted_date
+        posted = self.posted_date
+        if posted.tzinfo is None:
+            posted = posted.replace(tzinfo=timezone.utc)
+        delta = datetime.now(timezone.utc) - posted
         return delta.days
 
     def publish(self) -> None:
         """Publish the job posting."""
         self.status = JobStatus.OPEN
-        self.posted_date = datetime.utcnow()
+        self.posted_date = datetime.now(timezone.utc)
 
     def close(self) -> None:
         """Close the job posting."""

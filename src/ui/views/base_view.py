@@ -103,7 +103,7 @@ class BaseView(QWidget):
         # Separator line
         separator = QFrame()
         separator.setFrameShape(QFrame.Shape.HLine)
-        separator.setStyleSheet(f"background-color: #e2e8f0;")
+        separator.setStyleSheet(f"background-color: {COLORS['border_subtle']};")
         separator.setFixedHeight(1)
         header_layout.addWidget(separator)
 
@@ -120,20 +120,36 @@ class BaseView(QWidget):
                 border: none;
             }}
             QScrollBar:vertical {{
-                background-color: #f1f5f9;
+                background-color: {COLORS['surface_elevated']};
                 width: 8px;
                 border-radius: 4px;
             }}
             QScrollBar::handle:vertical {{
-                background-color: #cbd5e1;
+                background-color: {COLORS['border_muted']};
                 border-radius: 4px;
                 min-height: 20px;
             }}
             QScrollBar::handle:vertical:hover {{
-                background-color: #94a3b8;
+                background-color: {COLORS['text_tertiary']};
             }}
             QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{
                 height: 0px;
+            }}
+            QScrollBar:horizontal {{
+                background-color: {COLORS['surface_elevated']};
+                height: 8px;
+                border-radius: 4px;
+            }}
+            QScrollBar::handle:horizontal {{
+                background-color: {COLORS['border_muted']};
+                border-radius: 4px;
+                min-width: 20px;
+            }}
+            QScrollBar::handle:horizontal:hover {{
+                background-color: {COLORS['text_tertiary']};
+            }}
+            QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {{
+                width: 0px;
             }}
         """)
 

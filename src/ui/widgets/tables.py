@@ -67,24 +67,26 @@ class StyledTable(QTableWidget):
 
         self.setStyleSheet(f"""
             QTableWidget {{
-                background-color: {COLORS['surface']};
-                border: 1px solid #e2e8f0;
+                background-color: {COLORS['surface_elevated']};
+                color: {COLORS['text_primary']};
+                border: 1px solid {COLORS['border_subtle']};
                 border-radius: 8px;
                 gridline-color: transparent;
             }}
             QTableWidget::item {{
                 padding: 8px 12px;
-                border-bottom: 1px solid #f1f5f9;
+                color: {COLORS['text_primary']};
+                border-bottom: 1px solid {COLORS['border_subtle']};
             }}
             QTableWidget::item:selected {{
-                background-color: #eff6ff;
+                background-color: {COLORS['primary_glow']};
                 color: {COLORS['text_primary']};
             }}
             QTableWidget::item:hover {{
-                background-color: #f8fafc;
+                background-color: {COLORS['surface_overlay']};
             }}
             QHeaderView::section {{
-                background-color: #f8fafc;
+                background-color: {COLORS['surface_overlay']};
                 color: {COLORS['text_secondary']};
                 font-weight: 600;
                 font-size: 11px;
@@ -92,27 +94,43 @@ class StyledTable(QTableWidget):
                 letter-spacing: 0.5px;
                 padding: 12px;
                 border: none;
-                border-bottom: 1px solid #e2e8f0;
+                border-bottom: 1px solid {COLORS['border_muted']};
             }}
             QTableWidget QTableCornerButton::section {{
-                background-color: #f8fafc;
+                background-color: {COLORS['surface_overlay']};
                 border: none;
             }}
             QScrollBar:vertical {{
-                background-color: #f1f5f9;
+                background-color: {COLORS['surface_elevated']};
                 width: 8px;
                 border-radius: 4px;
             }}
             QScrollBar::handle:vertical {{
-                background-color: #cbd5e1;
+                background-color: {COLORS['border_muted']};
                 border-radius: 4px;
                 min-height: 20px;
             }}
             QScrollBar::handle:vertical:hover {{
-                background-color: #94a3b8;
+                background-color: {COLORS['text_tertiary']};
             }}
             QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{
                 height: 0px;
+            }}
+            QScrollBar:horizontal {{
+                background-color: {COLORS['surface_elevated']};
+                height: 8px;
+                border-radius: 4px;
+            }}
+            QScrollBar::handle:horizontal {{
+                background-color: {COLORS['border_muted']};
+                border-radius: 4px;
+                min-width: 20px;
+            }}
+            QScrollBar::handle:horizontal:hover {{
+                background-color: {COLORS['text_tertiary']};
+            }}
+            QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {{
+                width: 0px;
             }}
         """)
 
@@ -226,8 +244,9 @@ class DataTable(QWidget):
             self.search_input.setMinimumHeight(36)
             self.search_input.setStyleSheet(f"""
                 QLineEdit {{
-                    background-color: {COLORS['surface']};
-                    border: 1px solid #e2e8f0;
+                    background-color: {COLORS['surface_elevated']};
+                    color: {COLORS['text_primary']};
+                    border: 1px solid {COLORS['border_muted']};
                     border-radius: 6px;
                     padding: 8px 12px;
                     font-size: 13px;

@@ -24,7 +24,10 @@ from PyQt6.QtCore import Qt, pyqtSignal, QThread, QTimer, QObject
 from PyQt6.QtGui import QFont
 
 from src.utils.constants import COLORS
+from src.utils.logger import get_logger
 from src.ui.views.base_view import BaseView
+
+logger = get_logger(__name__)
 from src.ui.widgets import (
     Card,
     InfoCard,
@@ -180,8 +183,7 @@ class MatchingWorker(QObject):
                     })
 
                 except Exception as e:
-                    from src.utils.logger import get_logger
-                    get_logger(__name__).warning(f"Error processing {resume_file}: {e}")
+                    logger.warning(f"Error processing {resume_file}: {e}")
                     continue
 
             # Rank using CandidateRanker + FairnessReranker

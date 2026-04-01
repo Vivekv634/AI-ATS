@@ -78,7 +78,7 @@ class CandidateFormDialog(QDialog):
             }}
             QLineEdit, QTextEdit, QComboBox, QSpinBox {{
                 background-color: {COLORS['surface']};
-                border: 1px solid #e2e8f0;
+                border: 1px solid COLORS['border_subtle'];
                 border-radius: 6px;
                 padding: 8px;
                 font-size: 13px;
@@ -87,14 +87,14 @@ class CandidateFormDialog(QDialog):
                 border-color: {COLORS['primary']};
             }}
             QTabWidget::pane {{
-                border: 1px solid #e2e8f0;
+                border: 1px solid COLORS['border_subtle'];
                 border-radius: 6px;
                 background-color: {COLORS['surface']};
             }}
             QTabBar::tab {{
                 padding: 8px 16px;
                 margin-right: 4px;
-                background-color: #f1f5f9;
+                background-color: COLORS['surface_elevated'];
                 border-top-left-radius: 6px;
                 border-top-right-radius: 6px;
             }}
@@ -273,7 +273,7 @@ class CandidateDetailPanel(QFrame):
         self.setStyleSheet(f"""
             QFrame {{
                 background-color: {COLORS['surface']};
-                border: 1px solid #e2e8f0;
+                border: 1px solid COLORS['border_subtle'];
                 border-radius: 8px;
             }}
         """)
@@ -310,7 +310,7 @@ class CandidateDetailPanel(QFrame):
         # Divider
         divider = QFrame()
         divider.setFrameShape(QFrame.Shape.HLine)
-        divider.setStyleSheet("background-color: #e2e8f0; border: none;")
+        divider.setStyleSheet("background-color: COLORS['border_subtle']; border: none;")
         divider.setFixedHeight(1)
         layout.addWidget(divider)
 
@@ -335,7 +335,7 @@ class CandidateDetailPanel(QFrame):
         # Divider
         divider2 = QFrame()
         divider2.setFrameShape(QFrame.Shape.HLine)
-        divider2.setStyleSheet("background-color: #e2e8f0; border: none;")
+        divider2.setStyleSheet("background-color: COLORS['border_subtle']; border: none;")
         divider2.setFixedHeight(1)
         layout.addWidget(divider2)
 
@@ -357,7 +357,7 @@ class CandidateDetailPanel(QFrame):
         # Divider
         divider3 = QFrame()
         divider3.setFrameShape(QFrame.Shape.HLine)
-        divider3.setStyleSheet("background-color: #e2e8f0; border: none;")
+        divider3.setStyleSheet("background-color: COLORS['border_subtle']; border: none;")
         divider3.setFixedHeight(1)
         layout.addWidget(divider3)
 
@@ -647,7 +647,7 @@ class CandidatesView(BaseView):
         splitter = QSplitter(Qt.Orientation.Horizontal)
         splitter.setStyleSheet("""
             QSplitter::handle {
-                background-color: #e2e8f0;
+                background-color: COLORS['border_subtle'];
                 width: 1px;
             }
         """)
@@ -714,7 +714,7 @@ class CandidatesView(BaseView):
         self.status_filter.setStyleSheet(f"""
             QComboBox {{
                 background-color: {COLORS['surface']};
-                border: 1px solid #e2e8f0;
+                border: 1px solid COLORS['border_subtle'];
                 border-radius: 6px;
                 padding: 6px 12px;
             }}

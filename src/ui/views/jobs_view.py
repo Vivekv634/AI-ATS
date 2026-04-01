@@ -69,7 +69,7 @@ class JobFormDialog(QDialog):
             }}
             QLineEdit, QTextEdit, QComboBox, QSpinBox {{
                 background-color: {COLORS['surface']};
-                border: 1px solid #e2e8f0;
+                border: 1px solid COLORS['border_subtle'];
                 border-radius: 6px;
                 padding: 8px;
                 font-size: 13px;

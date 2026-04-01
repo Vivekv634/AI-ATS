@@ -20,7 +20,10 @@ from PyQt6.QtCore import Qt, QRectF
 from PyQt6.QtGui import QFont, QPainter, QColor, QPen, QBrush, QPainterPath
 
 from src.utils.constants import COLORS
+from src.utils.logger import get_logger
 from src.ui.views.base_view import BaseView
+
+logger = get_logger(__name__)
 from src.ui.widgets import StatCard, InfoCard, Card
 
 
@@ -1032,5 +1035,4 @@ class AnalyticsView(BaseView):
                 self._populate_job_performance([])
 
         except Exception as e:
-            from src.utils.logger import get_logger
-            get_logger(__name__).error(f"Error loading analytics: {e}")
+            logger.error(f"Error loading analytics: {e}")
