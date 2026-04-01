@@ -221,16 +221,51 @@ class AuditAction(str, Enum):
 
 # Color palette for the application
 COLORS: Final[dict[str, str]] = {
-    "primary": "#2563eb",
-    "primary_dark": "#1d4ed8",
-    "secondary": "#64748b",
-    "success": "#22c55e",
-    "warning": "#f59e0b",
-    "error": "#ef4444",
-    "background": "#f8fafc",
-    "surface": "#ffffff",
-    "text_primary": "#1e293b",
-    "text_secondary": "#64748b",
+    # ── Brand ──────────────────────────────────────────────────────────────────
+    "primary":          "#4B9EFF",   # Accessible bright blue (4.7:1 on bg_base)
+    "primary_dark":     "#1D6FCC",   # Pressed/deep state
+    "primary_glow":     "#1A3A6E",   # Subtle glow bg behind primary elements
+    "accent":           "#7C6AF7",   # Indigo accent — used on AI/ML badges
+    "accent_dim":       "#2A2456",   # Dimmed accent background
+    "secondary":        "#8B949E",   # Neutral label colour
+
+    # ── Status ─────────────────────────────────────────────────────────────────
+    "success":          "#2EA043",   # GitHub-green — pass, hired, high score
+    "success_dim":      "#1A3A28",   # Dim success background
+    "warning":          "#D29922",   # Amber — partial match, caution
+    "warning_dim":      "#3A2E10",   # Dim warning background
+    "error":            "#F85149",   # Red — fail, rejected, error
+    "error_dim":        "#3A1A1A",   # Dim error background
+    "info":             "#58A6FF",   # Info blue
+
+    # ── Surface elevation (L0 → L3) ───────────────────────────────────────────
+    # L0: absolute base (window / wallpaper)
+    "background":       "#080C14",
+    # L1: default panel / card surface
+    "surface":          "#0D1117",
+    # L2: elevated — hover backgrounds, active rows, inner panels
+    "surface_elevated": "#161B22",
+    # L3: overlay — dropdowns, tooltips, modals, active sidebar item
+    "surface_overlay":  "#1C2333",
+
+    # ── Borders ────────────────────────────────────────────────────────────────
+    "border_subtle":    "#21262D",   # Near-invisible divider
+    "border_muted":     "#30363D",   # Visible border
+
+    # ── Typography ─────────────────────────────────────────────────────────────
+    "text_primary":     "#E6EDF3",   # Off-white body/heading text
+    "text_secondary":   "#8B949E",   # Muted labels, hints
+    "text_tertiary":    "#484F58",   # Ghost text, disabled, version labels
+    "text_on_primary":  "#FFFFFF",   # Text on filled primary buttons
+}
+
+# ── Shadow definitions ─────────────────────────────────────────────────────────
+# Each entry: (blur_radius, x_offset, y_offset, alpha) for QGraphicsDropShadowEffect
+SHADOWS: Final[dict[str, tuple[int, int, int, int]]] = {
+    "sm":  (8,  0, 1, 40),   # Subtle card lift
+    "md":  (16, 0, 4, 60),   # Standard card elevation
+    "lg":  (28, 0, 8, 80),   # Modal / floating panel
+    "xl":  (48, 0, 16, 100), # Full overlay shadow
 }
 
 # Dashboard refresh intervals (in milliseconds)
