@@ -34,10 +34,12 @@ class StyledTable(QTableWidget):
 
     row_clicked = pyqtSignal(int)  # Emits row index when clicked
     row_double_clicked = pyqtSignal(int)  # Emits row index on double-click
+    selection_count_changed = pyqtSignal(int)  # Emits number of selected rows
 
-    def __init__(self, parent=None):
+    def __init__(self, multi_select: bool = False, parent=None):
         """Initialize the styled table."""
         super().__init__(parent)
+        self._multi_select = multi_select
         self._setup_style()
         self._connect_signals()
 
@@ -45,7 +47,10 @@ class StyledTable(QTableWidget):
         """Apply table styling."""
         self.setAlternatingRowColors(True)
         self.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
-        self.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        if self._multi_select:
+            self.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
+        else:
+            self.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         self.setShowGrid(False)
         self.setFrameShape(QFrame.Shape.NoFrame)
 
@@ -115,6 +120,12 @@ class StyledTable(QTableWidget):
         """Connect table signals."""
         self.cellClicked.connect(lambda row, _: self.row_clicked.emit(row))
         self.cellDoubleClicked.connect(lambda row, _: self.row_double_clicked.emit(row))
+        self.itemSelectionChanged.connect(self._on_selection_changed)
+
+    def _on_selection_changed(self):
+        """Emit the number of uniquely selected rows."""
+        count = len(set(item.row() for item in self.selectedItems()))
+        self.selection_count_changed.emit(count)
 
     def set_columns(self, columns: list[str]):
         """Set table column headers."""
@@ -155,6 +166,16 @@ class StyledTable(QTableWidget):
             return selected[0].data(Qt.ItemDataRole.UserRole)
         return None
 
+    def get_all_selected_rows_data(self) -> list[Any]:
+        """Get data from ALL currently selected rows (one entry per row)."""
+        rows = sorted(set(item.row() for item in self.selectedItems()))
+        result = []
+        for row in rows:
+            data = self.get_row_data(row)
+            if data is not None:
+                result.append(data)
+        return result
+
 
 class DataTable(QWidget):
     """
@@ -164,11 +185,13 @@ class DataTable(QWidget):
     """
 
     row_selected = pyqtSignal(object)  # Emits row data when selected
+    selection_changed = pyqtSignal(int)  # Emits number of selected rows
 
     def __init__(
         self,
         columns: list[str],
         searchable: bool = True,
+        multi_select: bool = False,
         parent=None,
     ):
         """
@@ -177,11 +200,13 @@ class DataTable(QWidget):
         Args:
             columns: List of column headers.
             searchable: Whether to show search box.
+            multi_select: Allow selecting multiple rows (Ctrl/Shift+click).
             parent: Parent widget.
         """
         super().__init__(parent)
         self.columns = columns
         self.searchable = searchable
+        self._multi_select = multi_select
         self._all_data = []  # Store all data for filtering
 
         self._setup_ui()
@@ -217,9 +242,10 @@ class DataTable(QWidget):
             layout.addLayout(search_layout)
 
         # Table
-        self.table = StyledTable()
+        self.table = StyledTable(multi_select=self._multi_select)
         self.table.set_columns(self.columns)
         self.table.row_clicked.connect(self._on_row_clicked)
+        self.table.selection_count_changed.connect(self.selection_changed)
         layout.addWidget(self.table)
 
         # Row count label
@@ -305,3 +331,7 @@ class DataTable(QWidget):
     def get_selected_data(self) -> Any:
         """Get currently selected row data."""
         return self.table.get_selected_row_data()
+
+    def get_all_selected_data(self) -> list[Any]:
+        """Get data from all currently selected rows."""
+        return self.table.get_all_selected_rows_data()

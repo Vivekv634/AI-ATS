@@ -233,6 +233,10 @@ class MainWindow(QMainWindow):
         # Connect dashboard quick actions to navigation
         self.dashboard_view.navigate_to_view.connect(self.switch_view)
 
+        # When a job is created/imported, mark the matching view as dirty so its
+        # job combo refreshes on the next visit (matching view is at index 3).
+        self.jobs_view.job_created.connect(lambda: self.mark_view_dirty(3))
+
         # Apply stylesheet
         self.setStyleSheet(
             """

@@ -282,27 +282,42 @@ class ContactParser:
             if len(line) > 50:
                 continue
 
-            # Skip lines that are all uppercase and very short (section header)
-            if line.isupper() and len(line.split()) <= 2:
+            # Skip single-word all-uppercase lines (section headers like "SKILLS")
+            # but allow two-word ALL-CAPS names like "JOHN SMITH"
+            if line.isupper() and len(line.split()) <= 1:
                 continue
 
             # Check if line looks like a name (2-4 words, mostly letters)
             words = line.split()
             if 1 <= len(words) <= 4:
-                # Check if words look like name parts
-                name_like = all(
-                    word[0].isupper() and word.replace("-", "").replace("'", "").isalpha()
-                    for word in words
-                    if word
-                )
+                # Check if words look like name parts.
+                # Handles:
+                #   - Normal caps: "John Smith"
+                #   - All-caps: "JOHN SMITH"
+                #   - Middle initials: "John A. Smith" (single letter + optional period)
+                #   - Hyphenated: "Mary-Jane Watson"
+                #   - Apostrophe names: "O'Brien"
+                def _is_name_word(w: str) -> bool:
+                    clean = w.replace("-", "").replace("'", "").rstrip(".")
+                    # Single uppercase letter (middle initial like "A.")
+                    if len(clean) == 1 and clean.isupper():
+                        return True
+                    # Must start with uppercase (title-case or all-caps)
+                    if not w[0].isupper():
+                        return False
+                    return clean.isalpha()
+
+                name_like = all(_is_name_word(word) for word in words if word)
 
                 if name_like:
-                    full_name = line
-                    first_name = words[0] if words else None
-                    last_name = words[-1] if len(words) > 1 else None
+                    # Normalize all-caps names to title case ("JOHN SMITH" → "John Smith")
+                    normalized = line.title() if line.isupper() else line
+                    norm_words = normalized.split()
+                    first_name = norm_words[0] if norm_words else None
+                    last_name = norm_words[-1] if len(norm_words) > 1 else None
 
                     return {
-                        "full_name": full_name,
+                        "full_name": normalized,
                         "first_name": first_name,
                         "last_name": last_name,
                     }

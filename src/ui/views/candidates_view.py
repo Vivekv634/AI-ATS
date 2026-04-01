@@ -30,6 +30,9 @@ from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QFont
 
 from src.utils.constants import COLORS, CandidateStatus
+from src.utils.logger import get_logger
+
+logger = get_logger(__name__)
 from src.ui.views.base_view import BaseView
 from src.ui.widgets import (
     DataTable,
@@ -545,6 +548,7 @@ class CandidatesView(BaseView):
             parent=parent,
         )
         self._candidates = []  # Store candidate data
+        self._current_candidate: dict | None = None  # Last clicked candidate
         self._setup_candidates_view()
 
     @staticmethod
@@ -572,7 +576,7 @@ class CandidatesView(BaseView):
             "email": contact.email if contact else "",
             "phone": contact.phone or "" if contact else "",
             "headline": candidate.headline or "",
-            "status": candidate.status.value if candidate.status else "new",
+            "status": getattr(candidate.status, "value", candidate.status) or "new",
             "experience_years": candidate.total_experience_years,
             "skills": ", ".join(candidate.skill_names) if candidate.skills else "",
             "education": edu_str,
@@ -610,8 +614,12 @@ class CandidatesView(BaseView):
         city = parts[0] if len(parts) > 0 else None
         state = parts[1] if len(parts) > 1 else None
 
+        email = data.get("email") or ""
+        if not email or "@" not in email:
+            raise ValueError("No valid email address — skipping database save")
+
         contact = ContactInfo(
-            email=data.get("email") or "unknown@import.local",
+            email=email,
             phone=data.get("phone") or None,
             linkedin_url=data.get("linkedin") or None,
             github_url=data.get("github") or None,
@@ -652,8 +660,10 @@ class CandidatesView(BaseView):
         self.candidates_table = DataTable(
             columns=["Name", "Email", "Headline", "Status", "Experience", "Skills"],
             searchable=True,
+            multi_select=True,
         )
         self.candidates_table.row_selected.connect(self._on_candidate_selected)
+        self.candidates_table.selection_changed.connect(self._on_selection_changed)
         table_layout.addWidget(self.candidates_table)
 
         splitter.addWidget(table_container)
@@ -745,7 +755,7 @@ class CandidatesView(BaseView):
                 self._candidates = []
         except Exception as e:
             self._candidates = []
-            print(f"Error loading candidates: {e}")
+            logger.error(f"Error loading candidates: {e}")
 
         self._refresh_table()
 
@@ -787,11 +797,21 @@ class CandidatesView(BaseView):
             filtered = [c for c in self._candidates if c.get("status") == status]
             self._refresh_table(filtered)
 
-    def _on_candidate_selected(self, data: dict):
-        """Handle candidate selection."""
-        self.edit_btn.setEnabled(True)
-        self.delete_btn.setEnabled(True)
+    def _on_selection_changed(self, count: int):
+        """Update toolbar button states when the table selection changes."""
+        # Edit requires exactly one row; delete requires at least one.
+        self.edit_btn.setEnabled(count == 1)
+        self.delete_btn.setEnabled(count >= 1)
+        if count > 1:
+            self.delete_btn.setText(f"Delete ({count})")
+        else:
+            self.delete_btn.setText("Delete")
+        # Clear tracked candidate when nothing is selected
+        if count == 0:
+            self._current_candidate = None
 
+    def _on_candidate_selected(self, data: dict):
+        """Handle candidate row click — update detail panel and track for editing."""
         # Get original candidate data
         original = data.get("_original", data)
 
@@ -803,8 +823,11 @@ class CandidatesView(BaseView):
                 break
 
         if candidate:
+            self._current_candidate = candidate
             self.detail_panel.update_candidate(candidate)
             self.candidate_selected.emit(candidate)
+        else:
+            self._current_candidate = None
 
     def _add_candidate(self):
         """Open dialog to add a new candidate."""
@@ -835,136 +858,165 @@ class CandidatesView(BaseView):
             self._filter_candidates()
 
     def _edit_candidate(self):
-        """Edit selected candidate."""
-        data = self.candidates_table.get_selected_data()
-        if data:
-            # Find full candidate data
-            original = data.get("_original", data)
-            candidate = None
-            for c in self._candidates:
-                if c["id"] == original.get("id", data.get("id")):
-                    candidate = c
-                    break
+        """Edit the currently selected candidate."""
+        candidate = self._current_candidate
+        if candidate:
+            dialog = CandidateFormDialog(candidate_data=candidate, parent=self)
+            if dialog.exec() == QDialog.DialogCode.Accepted:
+                updated_data = dialog.get_candidate_data()
+                updated_data["id"] = candidate["id"]
 
-            if candidate:
-                dialog = CandidateFormDialog(candidate_data=candidate, parent=self)
-                if dialog.exec() == QDialog.DialogCode.Accepted:
-                    updated_data = dialog.get_candidate_data()
-                    updated_data["id"] = candidate["id"]
-
-                    # Persist to database
-                    try:
-                        from src.data.database import get_database_manager
-                        from src.data.repositories import get_candidate_repository
-                        from src.data.models.candidate import (
-                            CandidateUpdate, ContactInfo, Skill, Education,
-                        )
-
-                        db_manager = get_database_manager()
-                        if db_manager.check_sync_connection():
-                            candidate_repo = get_candidate_repository()
-
-                            skills = []
-                            if updated_data.get("skills"):
-                                for s in updated_data["skills"].split(","):
-                                    s = s.strip()
-                                    if s:
-                                        skills.append(Skill(name=s))
-
-                            education = []
-                            if updated_data.get("education"):
-                                education.append(Education(
-                                    degree=updated_data["education"],
-                                    field_of_study="",
-                                    institution="",
-                                ))
-
-                            loc = updated_data.get("location", "")
-                            parts = [p.strip() for p in loc.split(",") if p.strip()] if loc else []
-                            city = parts[0] if len(parts) > 0 else None
-                            state = parts[1] if len(parts) > 1 else None
-
-                            contact = ContactInfo(
-                                email=updated_data.get("email") or "unknown@import.local",
-                                phone=updated_data.get("phone") or None,
-                                linkedin_url=updated_data.get("linkedin") or None,
-                                github_url=updated_data.get("github") or None,
-                                portfolio_url=updated_data.get("portfolio") or None,
-                                city=city or None,
-                                state=state or None,
-                            )
-
-                            status_val = updated_data.get("status")
-                            from src.utils.constants import CandidateStatus as CS
-                            status = CS(status_val) if status_val else None
-
-                            update_schema = CandidateUpdate(
-                                first_name=updated_data.get("first_name"),
-                                last_name=updated_data.get("last_name"),
-                                contact=contact,
-                                headline=updated_data.get("headline") or None,
-                                summary=updated_data.get("summary") or None,
-                                skills=skills if skills else None,
-                                education=education if education else None,
-                                status=status,
-                            )
-
-                            result = candidate_repo.update_from_schema(
-                                candidate["id"], update_schema
-                            )
-                            if result:
-                                updated_data = self._candidate_to_dict(result)
-                    except Exception as e:
-                        QMessageBox.warning(
-                            self, "Database Error",
-                            f"Could not update in database: {e}\nChanges saved locally.",
-                        )
-
-                    # Update in list
-                    for i, c in enumerate(self._candidates):
-                        if c["id"] == candidate["id"]:
-                            self._candidates[i] = updated_data
-                            break
-                    self._refresh_table()
-                    self._filter_candidates()
-                    self.detail_panel.update_candidate(updated_data)
-
-    def _delete_candidate(self):
-        """Delete selected candidate."""
-        data = self.candidates_table.get_selected_data()
-        if data:
-            original = data.get("_original", data)
-            candidate_id = original.get("id", data.get("id"))
-            name = f"{original.get('first_name', '')} {original.get('last_name', '')}"
-
-            reply = QMessageBox.question(
-                self,
-                "Delete Candidate",
-                f"Are you sure you want to delete '{name.strip()}'?",
-                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            )
-            if reply == QMessageBox.StandardButton.Yes:
-                # Delete from database
+                # Persist to database
                 try:
                     from src.data.database import get_database_manager
                     from src.data.repositories import get_candidate_repository
+                    from src.data.models.candidate import (
+                        CandidateUpdate, ContactInfo, Skill, Education,
+                    )
 
                     db_manager = get_database_manager()
                     if db_manager.check_sync_connection():
                         candidate_repo = get_candidate_repository()
-                        candidate_repo.delete(candidate_id)
+
+                        skills = []
+                        if updated_data.get("skills"):
+                            for s in updated_data["skills"].split(","):
+                                s = s.strip()
+                                if s:
+                                    skills.append(Skill(name=s))
+
+                        education = []
+                        if updated_data.get("education"):
+                            education.append(Education(
+                                degree=updated_data["education"],
+                                field_of_study="",
+                                institution="",
+                            ))
+
+                        loc = updated_data.get("location", "")
+                        parts = [p.strip() for p in loc.split(",") if p.strip()] if loc else []
+                        city = parts[0] if len(parts) > 0 else None
+                        state = parts[1] if len(parts) > 1 else None
+
+                        contact = ContactInfo(
+                            email=updated_data.get("email") or "unknown@import.local",
+                            phone=updated_data.get("phone") or None,
+                            linkedin_url=updated_data.get("linkedin") or None,
+                            github_url=updated_data.get("github") or None,
+                            portfolio_url=updated_data.get("portfolio") or None,
+                            city=city or None,
+                            state=state or None,
+                        )
+
+                        status_val = updated_data.get("status")
+                        from src.utils.constants import CandidateStatus as CS
+                        status = CS(status_val) if status_val else None
+
+                        update_schema = CandidateUpdate(
+                            first_name=updated_data.get("first_name"),
+                            last_name=updated_data.get("last_name"),
+                            contact=contact,
+                            headline=updated_data.get("headline") or None,
+                            summary=updated_data.get("summary") or None,
+                            skills=skills if skills else None,
+                            education=education if education else None,
+                            status=status,
+                        )
+
+                        result = candidate_repo.update_from_schema(
+                            candidate["id"], update_schema
+                        )
+                        if result:
+                            updated_data = self._candidate_to_dict(result)
                 except Exception as e:
                     QMessageBox.warning(
                         self, "Database Error",
-                        f"Could not delete from database: {e}",
+                        f"Could not update in database: {e}\nChanges saved locally.",
                     )
 
-                self._candidates = [c for c in self._candidates if c["id"] != candidate_id]
+                # Update in list
+                for i, c in enumerate(self._candidates):
+                    if c["id"] == candidate["id"]:
+                        self._candidates[i] = updated_data
+                        break
+                # Keep current candidate up to date so the detail panel reflects edits
+                self._current_candidate = updated_data
                 self._refresh_table()
                 self._filter_candidates()
-                self.edit_btn.setEnabled(False)
-                self.delete_btn.setEnabled(False)
-                self.detail_panel.update_candidate(None)
+                self.detail_panel.update_candidate(updated_data)
+
+    def _delete_candidate(self):
+        """Delete all currently selected candidates."""
+        all_selected = self.candidates_table.get_all_selected_data()
+        if not all_selected:
+            return
+
+        # Collect unique IDs and display names from the selection
+        to_delete = []
+        seen_ids: set[str] = set()
+        for data in all_selected:
+            original = data.get("_original", data)
+            cid = original.get("id", data.get("id"))
+            if cid and cid not in seen_ids:
+                seen_ids.add(cid)
+                name = (
+                    f"{original.get('first_name', '')} {original.get('last_name', '')}".strip()
+                    or original.get("Name", "Unknown")
+                )
+                to_delete.append({"id": cid, "name": name or "Unknown"})
+
+        if not to_delete:
+            return
+
+        # Build confirmation message
+        if len(to_delete) == 1:
+            confirm_msg = f"Are you sure you want to delete '{to_delete[0]['name']}'?"
+        else:
+            sample = ", ".join(f"'{c['name']}'" for c in to_delete[:3])
+            if len(to_delete) > 3:
+                sample += f" and {len(to_delete) - 3} more"
+            confirm_msg = f"Delete {len(to_delete)} candidates?\n\n{sample}"
+
+        reply = QMessageBox.question(
+            self,
+            "Delete Candidates",
+            confirm_msg,
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+        )
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+
+        # Delete from database
+        db_errors: list[str] = []
+        try:
+            from src.data.database import get_database_manager
+            from src.data.repositories import get_candidate_repository
+
+            db_manager = get_database_manager()
+            if db_manager.check_sync_connection():
+                candidate_repo = get_candidate_repository()
+                for c in to_delete:
+                    try:
+                        candidate_repo.delete(c["id"])
+                    except Exception as e:
+                        db_errors.append(f"{c['name']}: {e}")
+        except Exception as e:
+            QMessageBox.warning(self, "Database Error", f"Could not connect: {e}")
+
+        if db_errors:
+            QMessageBox.warning(
+                self, "Database Error",
+                "Some candidates could not be deleted from the database:\n"
+                + "\n".join(db_errors[:5]),
+            )
+
+        # Remove from in-memory list regardless of DB errors (mirror original behaviour)
+        ids_to_remove = {c["id"] for c in to_delete}
+        self._candidates = [c for c in self._candidates if c["id"] not in ids_to_remove]
+        self._current_candidate = None
+        self._refresh_table()
+        self._filter_candidates()
+        self.detail_panel.update_candidate(None)
 
     def _import_resume(self):
         """Import resume files and create candidates using NLP pipeline."""
@@ -1016,7 +1068,7 @@ class CandidatesView(BaseView):
                         candidate_data = {
                             "first_name": result.contact.get("first_name") or "Unknown",
                             "last_name": result.contact.get("last_name") or "Candidate",
-                            "email": result.contact.get("email") or f"unknown_{i}@import.local",
+                            "email": result.contact.get("email") or "",
                             "phone": result.contact.get("phone") or "",
                             "headline": result.experience[0].get("job_title") if result.experience else "",
                             "status": "new",
@@ -1040,12 +1092,20 @@ class CandidatesView(BaseView):
                             if db_manager.check_sync_connection():
                                 candidate_repo = get_candidate_repository()
                                 schema = self._dict_to_candidate_create(candidate_data)
-                                created = candidate_repo.create_from_schema(schema)
-                                ui_dict = self._candidate_to_dict(created)
-                                self._candidates.insert(0, ui_dict)
-                                saved_to_db = True
+                                try:
+                                    created = candidate_repo.create_from_schema(schema)
+                                except Exception as db_err:
+                                    if "11000" in str(db_err) or "duplicate key" in str(db_err).lower():
+                                        # Email already exists — load existing record
+                                        created = candidate_repo.get_by_email(candidate_data.get("email", ""))
+                                    else:
+                                        raise
+                                if created:
+                                    ui_dict = self._candidate_to_dict(created)
+                                    self._candidates.insert(0, ui_dict)
+                                    saved_to_db = True
                         except Exception as e:
-                            print(f"Could not save imported candidate to DB: {e}")
+                            logger.error(f"Could not save imported candidate to DB: {e}")
 
                         if not saved_to_db:
                             candidate_data["id"] = str(len(self._candidates) + success_count + 1)
@@ -1131,7 +1191,7 @@ class CandidatesView(BaseView):
             candidate = {
                 "first_name": candidate_data.get("first_name") or "Unknown",
                 "last_name": candidate_data.get("last_name") or "Candidate",
-                "email": candidate_data.get("email") or f"imported_{added_count}@import.local",
+                "email": candidate_data.get("email") or "",
                 "phone": candidate_data.get("phone") or "",
                 "headline": candidate_data.get("headline") or "",
                 "status": "new",
@@ -1149,13 +1209,20 @@ class CandidatesView(BaseView):
             if candidate_repo:
                 try:
                     schema = self._dict_to_candidate_create(candidate)
-                    created = candidate_repo.create_from_schema(schema)
-                    ui_dict = self._candidate_to_dict(created)
-                    self._candidates.insert(0, ui_dict)
-                    added_count += 1
-                    continue
+                    try:
+                        created = candidate_repo.create_from_schema(schema)
+                    except Exception as db_err:
+                        if "11000" in str(db_err) or "duplicate key" in str(db_err).lower():
+                            created = candidate_repo.get_by_email(candidate.get("email", ""))
+                        else:
+                            raise
+                    if created:
+                        ui_dict = self._candidate_to_dict(created)
+                        self._candidates.insert(0, ui_dict)
+                        added_count += 1
+                        continue
                 except Exception as e:
-                    print(f"Could not save imported candidate to DB: {e}")
+                    logger.error(f"Could not save imported candidate to DB: {e}")
                     db_errors += 1
 
             # Fallback: in-memory only

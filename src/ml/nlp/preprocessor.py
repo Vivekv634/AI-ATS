@@ -29,6 +29,10 @@ SECTION_HEADERS = {
         "experience", "work experience", "employment history",
         "professional experience", "work history", "employment",
         "career history", "professional background", "positions held",
+        "internship", "internships", "internship experience",
+        "internship/experience", "experience/internship",
+        "work experience/internship", "internship & experience",
+        "industry experience",
     ],
     "education": [
         "education", "educational background", "academic background",
@@ -150,6 +154,12 @@ class TextPreprocessor:
 
         if word_count < 50:
             warnings.append("Very short text - may be incomplete extraction")
+
+        if language != "en":
+            warnings.append(
+                f"Non-English resume detected (language: {language}). "
+                "Parsing accuracy may be reduced for non-English content."
+            )
 
         if not sections:
             warnings.append("Could not detect standard resume sections")
@@ -294,10 +304,12 @@ class TextPreprocessor:
                 if clean_line.startswith(header.lower()) and len(clean_line) < len(header) + 5:
                     return section_type
 
-        # Check for ALL CAPS short lines (common header format)
+        # Check for ALL CAPS short lines (common header format).
+        # Require at least 2 words so single-word acronyms on their own line
+        # (e.g. "AWS", "SQL", "API") are not misidentified as section headers.
         if (
             line.isupper()
-            and len(line.split()) <= 4
+            and 2 <= len(line.split()) <= 4
             and len(line) <= 40
         ):
             # Try to match to a section type
@@ -308,27 +320,70 @@ class TextPreprocessor:
 
         return None
 
+    # High-frequency stop words that are strongly distinctive per language.
+    # Words shared across languages (e.g. "a", "in") are intentionally excluded.
+    _LANG_STOP_WORDS: dict[str, frozenset[str]] = {
+        "en": frozenset([
+            "the", "and", "for", "with", "of", "to", "in", "is", "are", "was",
+            "has", "have", "this", "that", "which", "from", "by", "at", "an",
+            "skills", "experience", "education", "work", "company",
+        ]),
+        "fr": frozenset([
+            "le", "la", "les", "de", "du", "des", "et", "en", "un", "une",
+            "est", "avec", "dans", "qui", "que", "sur", "par", "pour",
+            "compétences", "expérience", "formation", "entreprise",
+        ]),
+        "de": frozenset([
+            "der", "die", "das", "und", "in", "von", "mit", "ist", "für",
+            "auf", "an", "den", "ein", "eine", "als", "auch", "bei",
+            "kenntnisse", "erfahrung", "ausbildung", "entwicklung",
+        ]),
+        "es": frozenset([
+            "el", "la", "los", "las", "de", "del", "y", "en", "con", "por",
+            "que", "un", "una", "es", "para", "como", "sus", "del",
+            "experiencia", "habilidades", "formación", "empresa",
+        ]),
+        "it": frozenset([
+            "il", "lo", "la", "le", "di", "del", "e", "in", "con", "per",
+            "che", "un", "una", "è", "da", "su", "si", "dei",
+            "competenze", "esperienza", "formazione", "azienda",
+        ]),
+        "pt": frozenset([
+            "o", "a", "os", "as", "de", "do", "da", "e", "em", "com",
+            "que", "um", "uma", "por", "para", "das", "dos",
+            "experiência", "habilidades", "formação", "empresa",
+        ]),
+    }
+
     def _detect_language(self, text: str) -> str:
         """
-        Detect the language of the text.
+        Detect the language of resume text using stop-word frequency.
 
-        Currently returns 'en' as default. Can be extended with
-        langdetect or similar library.
+        Tokenises on word boundaries so substrings don't produce false
+        positives (e.g. 'the' inside 'théâtre').  Returns the BCP-47
+        language tag with the highest stop-word hit count, defaulting
+        to 'en' when the text is empty or the scores are tied.
+
+        Args:
+            text: Cleaned resume text.
+
+        Returns:
+            Two-letter language code such as 'en', 'fr', 'de', 'es'.
         """
-        # Simple heuristic: check for common English words
-        english_indicators = [
-            "the", "and", "for", "with", "experience",
-            "education", "skills", "work", "company",
-        ]
-
-        text_lower = text.lower()
-        english_count = sum(1 for word in english_indicators if word in text_lower)
-
-        if english_count >= 3:
+        if not text.strip():
             return "en"
 
-        # Default to English
-        return "en"
+        import re
+        tokens: set[str] = set(re.findall(r"\b[a-záàâäãåçéèêëíìîïñóòôöõúùûüýÿæœ]+\b",
+                                           text.lower()))
+
+        scores: dict[str, int] = {
+            lang: len(tokens & words)
+            for lang, words in self._LANG_STOP_WORDS.items()
+        }
+
+        best_lang: str = max(scores, key=lambda lang: (scores[lang], lang == "en"))
+        return best_lang if scores[best_lang] > 0 else "en"
 
     def get_section_content(
         self, preprocessed: PreprocessedText, section_type: str

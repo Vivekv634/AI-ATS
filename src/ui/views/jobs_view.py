@@ -24,7 +24,10 @@ from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QFont
 
 from src.utils.constants import COLORS
+from src.utils.logger import get_logger
 from src.ui.views.base_view import BaseView
+
+logger = get_logger(__name__)
 from src.ui.widgets import (
     DataTable,
     PrimaryButton,
@@ -103,7 +106,7 @@ class JobFormDialog(QDialog):
             "Part-time",
             "Contract",
             "Internship",
-            "Remote",
+            "Freelance",
         ])
         if self.job_data.get("type"):
             self.type_combo.setCurrentText(self.job_data.get("type"))
@@ -185,6 +188,7 @@ class JobsView(BaseView):
     """
 
     job_selected = pyqtSignal(dict)  # Emitted when a job is selected
+    job_created = pyqtSignal()       # Emitted whenever a job is saved to the DB
 
     # Mapping between UI display text and model enum values
     _TYPE_TO_ENUM = {
@@ -192,7 +196,7 @@ class JobsView(BaseView):
         "Part-time": "part_time",
         "Contract": "contract",
         "Internship": "internship",
-        "Remote": "freelance",  # UI uses "Remote", closest enum
+        "Freelance": "freelance",
     }
     _ENUM_TO_TYPE = {v: k for k, v in _TYPE_TO_ENUM.items()}
 
@@ -282,15 +286,15 @@ class JobsView(BaseView):
     def _job_to_dict(self, job) -> dict:
         """Convert a Job model object to a flat dict for the UI."""
         emp_type = self._ENUM_TO_TYPE.get(
-            job.employment_type.value if job.employment_type else "full_time",
+            getattr(job.employment_type, "value", job.employment_type) or "full_time",
             "Full-time",
         )
         exp_level = self._ENUM_TO_LEVEL.get(
-            job.experience_level.value if job.experience_level else "mid",
+            getattr(job.experience_level, "value", job.experience_level) or "mid",
             "Mid-Level",
         )
         status = self._ENUM_TO_STATUS.get(
-            job.status.value if job.status else "open",
+            getattr(job.status, "value", job.status) or "open",
             "Open",
         )
         skills = ", ".join(job.all_skills) if job.skill_requirements else ""
@@ -361,7 +365,7 @@ class JobsView(BaseView):
                 self._jobs = []
         except Exception as e:
             self._jobs = []
-            print(f"Error loading jobs: {e}")
+            logger.error(f"Error loading jobs: {e}")
 
         self._refresh_table()
 
@@ -401,6 +405,7 @@ class JobsView(BaseView):
                         ui_dict = self._job_to_dict(created)
                         self._jobs.insert(0, ui_dict)
                         self._refresh_table()
+                        self.job_created.emit()
                         return
                 except Exception as e:
                     QMessageBox.warning(self, "Database Error", f"Could not save to database: {e}")
@@ -535,7 +540,7 @@ class JobsView(BaseView):
                     }
             except Exception as e:
                 # If parsing fails, just open empty dialog
-                print(f"JD parsing failed, opening empty form: {e}")
+                logger.warning(f"JD parsing failed, opening empty form: {e}")
 
             dialog = JobFormDialog(job_data=parsed_data if parsed_data else None, parent=self)
             if dialog.exec() == QDialog.DialogCode.Accepted:
@@ -553,6 +558,7 @@ class JobsView(BaseView):
                             ui_dict = self._job_to_dict(created)
                             self._jobs.insert(0, ui_dict)
                             self._refresh_table()
+                            self.job_created.emit()
                             return
                     except Exception as e:
                         QMessageBox.warning(self, "Database Error", f"Could not save to database: {e}")

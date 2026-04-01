@@ -223,6 +223,23 @@ class SkillsParser:
         """Parse skills from a dedicated skills section."""
         skills = []
 
+        # Expand "Category Label: skill1, skill2" lines — strip the label,
+        # keeping only the items so they can be tokenised correctly below.
+        expanded_lines = []
+        for line in section_text.split("\n"):
+            colon_match = re.match(
+                r"^([A-Za-z][A-Za-z\s&/()]{0,30}):\s*(.+)$", line.strip()
+            )
+            if colon_match:
+                label, items = colon_match.group(1).strip(), colon_match.group(2)
+                # Only strip the label when it looks like a category header
+                # (short phrase, not a skill name itself)
+                if len(label.split()) <= 4:
+                    expanded_lines.append(items)
+                    continue
+            expanded_lines.append(line)
+        section_text = "\n".join(expanded_lines)
+
         # Common separators in skills sections
         # Split by common delimiters
         skill_candidates = re.split(

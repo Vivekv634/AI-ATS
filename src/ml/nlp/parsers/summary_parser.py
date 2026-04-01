@@ -59,8 +59,15 @@ class SummaryParser:
         # Collapse multiple whitespace / newlines to single space
         cleaned = re.sub(r"\s+", " ", section_text.strip())
 
-        # Cap length to prevent bloat
-        cleaned = cleaned[:1000]
+        # Cap length to prevent bloat, but break at the last sentence boundary
+        # within the limit so we never split a sentence mid-way.
+        if len(cleaned) > 1000:
+            boundary = max(
+                cleaned.rfind(".", 0, 1000),
+                cleaned.rfind("!", 0, 1000),
+                cleaned.rfind("?", 0, 1000),
+            )
+            cleaned = cleaned[: boundary + 1] if boundary > 0 else cleaned[:1000]
 
         themes = self._detect_themes(cleaned)
         confidence = 0.9 if len(cleaned) > 50 else 0.5

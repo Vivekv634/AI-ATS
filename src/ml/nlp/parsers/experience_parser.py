@@ -258,8 +258,24 @@ class ExperienceParser:
 
         return experience
 
+    # Pattern for "Month-Month Year" shorthand like "Apr–Jul 2024"
+    COMPACT_RANGE_PATTERN = re.compile(
+        r"((?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*)"
+        r"\s*[-–—/]\s*"
+        r"((?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*)"
+        r"\s+(\d{4})",
+        re.IGNORECASE,
+    )
+
     def _extract_dates(self, text: str) -> Optional[dict]:
         """Extract date range from text."""
+        # Try compact "Mon-Mon Year" format first (e.g. "Apr–Jul 2024")
+        compact = self.COMPACT_RANGE_PATTERN.search(text)
+        if compact:
+            start_date = self._parse_date(f"{compact.group(1)} {compact.group(3)}")
+            end_date = self._parse_date(f"{compact.group(2)} {compact.group(3)}")
+            return {"start": start_date, "end": end_date, "is_current": False}
+
         # Try to find date range first
         range_match = self.DATE_RANGE_PATTERN.search(text)
         if range_match:
@@ -338,6 +354,31 @@ class ExperienceParser:
             if not line:
                 continue
 
+            # Strip leading numbered list prefix: "1.", "2.", "1)", etc.
+            line = re.sub(r"^\d+[.)]\s*", "", line)
+
+            # Handle pipe-separated format: "Title - Company | Date" or
+            # "Title | Organization | Date".  Extract segments before dates.
+            if "|" in line:
+                segments = [s.strip() for s in line.split("|")]
+                for seg in segments:
+                    seg_clean = self.DATE_RANGE_PATTERN.sub("", seg)
+                    seg_clean = self.DATE_PATTERN.sub("", seg_clean).strip(" -–—,")
+                    if not seg_clean:
+                        continue
+                    if not result.get("title"):
+                        # First segment is title (may contain "Title - Company")
+                        if " - " in seg_clean:
+                            parts = seg_clean.split(" - ", 1)
+                            result["title"] = parts[0].strip()
+                            if not result.get("company"):
+                                result["company"] = parts[1].strip()
+                        else:
+                            result["title"] = seg_clean
+                    elif not result.get("company"):
+                        result["company"] = seg_clean
+                continue
+
             # Remove dates from line for cleaner parsing
             clean_line = self.DATE_RANGE_PATTERN.sub("", line)
             clean_line = self.DATE_PATTERN.sub("", clean_line)
@@ -350,6 +391,14 @@ class ExperienceParser:
             line_lower = clean_line.lower()
             has_title = any(kw in line_lower for kw in self.JOB_TITLE_KEYWORDS)
 
+            # Handle "Title - Company" on same line
+            if " - " in clean_line and not result.get("title"):
+                parts = clean_line.split(" - ", 1)
+                result["title"] = parts[0].strip()
+                if not result.get("company"):
+                    result["company"] = parts[1].strip()
+                continue
+
             # Check if this line looks like a company
             has_company = self._looks_like_company(clean_line)
 
@@ -359,7 +408,7 @@ class ExperienceParser:
                 result["company"] = clean_line
             elif not result.get("title") and not result.get("company"):
                 # First non-empty line might be title
-                if len(clean_line.split()) <= 6:
+                if len(clean_line.split()) <= 8:
                     result["title"] = clean_line
 
         # Try to extract location
@@ -401,15 +450,37 @@ class ExperienceParser:
     def _calculate_total_years(
         self, experiences: list[ExtractedExperience]
     ) -> float:
-        """Calculate total years of experience."""
-        total_months = 0
+        """Calculate total years of experience, merging overlapping date ranges.
+
+        Concurrent jobs (e.g. a part-time role alongside a full-time role) would
+        otherwise be double-counted. We sort all intervals by start date, merge
+        any that overlap, then sum the merged spans.
+        """
+        today = date.today()
+        intervals: list[tuple[date, date]] = []
 
         for exp in experiences:
             if exp.start_date:
-                end = exp.end_date or date.today()
-                delta = end - exp.start_date
-                months = max(1, delta.days // 30)
-                total_months += months
+                intervals.append((exp.start_date, exp.end_date or today))
+
+        if not intervals:
+            return 0.0
+
+        # Sort by start date then merge overlapping / adjacent intervals.
+        intervals.sort(key=lambda x: x[0])
+        merged: list[tuple[date, date]] = [intervals[0]]
+        for start, end in intervals[1:]:
+            prev_start, prev_end = merged[-1]
+            if start <= prev_end:
+                # Overlapping or adjacent — extend the previous interval if needed.
+                merged[-1] = (prev_start, max(prev_end, end))
+            else:
+                merged.append((start, end))
+
+        total_months = 0
+        for start, end in merged:
+            delta = end - start
+            total_months += max(1, delta.days // 30)
 
         return round(total_months / 12, 1)
 

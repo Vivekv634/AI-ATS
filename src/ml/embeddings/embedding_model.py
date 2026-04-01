@@ -5,6 +5,7 @@ Uses sentence-transformers library for generating high-quality
 semantic embeddings from text content.
 """
 
+from collections import OrderedDict
 from typing import Optional
 
 import numpy as np
@@ -27,6 +28,7 @@ class EmbeddingModel:
         self,
         model_name: Optional[str] = None,
         device: Optional[str] = None,
+        cache_maxsize: int = 512,
     ):
         """
         Initialize the embedding model.
@@ -36,15 +38,22 @@ class EmbeddingModel:
                        Defaults to config setting.
             device: Device to run model on ('cpu', 'cuda', 'mps').
                    Defaults to config setting.
+            cache_maxsize: Maximum number of single-text embeddings to keep
+                          in the LRU cache. Set to 0 to disable caching.
         """
         settings = get_settings()
         self.model_name = model_name or settings.ml.embedding_model
         self.device = device or settings.ml.device
         self.dimension = settings.ml.embedding_dimension
         self.batch_size = settings.ml.batch_size
+        self.cache_maxsize = cache_maxsize
 
         self._model = None
         self._initialized = False
+        # LRU cache for single-string encode() calls.
+        # Key: (text, normalize)  Value: embedding ndarray
+        # OrderedDict gives O(1) move-to-end for LRU bookkeeping.
+        self._cache: OrderedDict[tuple[str, bool], np.ndarray] = OrderedDict()
 
     def _load_model(self) -> None:
         """Lazy load the embedding model."""
@@ -88,6 +97,11 @@ class EmbeddingModel:
         """
         Generate embeddings for text(s).
 
+        Single-string calls are served from an LRU cache so that identical
+        texts (e.g. the same JD encoded once per candidate) never hit the
+        model more than once per process lifetime.  List inputs bypass the
+        cache because batch calls are typically unique and large.
+
         Args:
             texts: Single text string or list of texts to encode.
             normalize: Whether to L2-normalize embeddings (for cosine similarity).
@@ -101,11 +115,18 @@ class EmbeddingModel:
             self._load_model()
 
         single_input = isinstance(texts, str)
-        if single_input:
-            texts = [texts]
+
+        if single_input and self.cache_maxsize > 0:
+            cache_key = (texts, normalize)
+            cached = self._cache.get(cache_key)
+            if cached is not None:
+                self._cache.move_to_end(cache_key)
+                return cached
+
+        texts_list = [texts] if single_input else texts
 
         embeddings = self.model.encode(
-            texts,
+            texts_list,
             batch_size=self.batch_size,
             show_progress_bar=show_progress,
             normalize_embeddings=normalize,
@@ -113,9 +134,24 @@ class EmbeddingModel:
         )
 
         if single_input:
-            return embeddings[0]
+            result = embeddings[0]
+            if self.cache_maxsize > 0:
+                self._cache[cache_key] = result
+                self._cache.move_to_end(cache_key)
+                if len(self._cache) > self.cache_maxsize:
+                    self._cache.popitem(last=False)
+            return result
 
         return embeddings
+
+    def cache_clear(self) -> None:
+        """Clear the embedding cache."""
+        self._cache.clear()
+
+    @property
+    def cache_info(self) -> dict:
+        """Return current cache occupancy."""
+        return {"size": len(self._cache), "maxsize": self.cache_maxsize}
 
     def encode_resume(self, resume_text: str) -> np.ndarray:
         """

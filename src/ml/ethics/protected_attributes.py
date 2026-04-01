@@ -294,6 +294,10 @@ class ProtectedAttributeDetector:
 
         for pattern_name, pattern in self.disability_patterns.items():
             for match in pattern.finditer(text):
+                # "blind" fires on "blind review", "single-blind study", etc.
+                if match.group().lower() == "blind" and self._is_technical_context(text, match):
+                    continue
+
                 detected.append(DetectedAttribute(
                     attribute_type="disability",
                     indicator=match.group(),
@@ -308,8 +312,14 @@ class ProtectedAttributeDetector:
         """Detect marital/family status indicators."""
         detected = []
 
+        # Terms that commonly appear in technical contexts and produce false positives
+        _technical_prone = {"single", "partner", "parent", "children"}
+
         for pattern_name, pattern in self.family_patterns.items():
             for match in pattern.finditer(text):
+                if match.group().lower() in _technical_prone and self._is_technical_context(text, match):
+                    continue
+
                 detected.append(DetectedAttribute(
                     attribute_type="marital_status",
                     indicator=match.group(),
@@ -326,6 +336,10 @@ class ProtectedAttributeDetector:
 
         for pattern_name, pattern in self.nationality_patterns.items():
             for match in pattern.finditer(text):
+                # "foreign" fires on "foreign key", "foreign function interface", etc.
+                if match.group().lower() == "foreign" and self._is_technical_context(text, match):
+                    continue
+
                 detected.append(DetectedAttribute(
                     attribute_type="nationality",
                     indicator=match.group(),
@@ -341,6 +355,40 @@ class ProtectedAttributeDetector:
         context = self._get_context(text, match, window=50)
         quote_indicators = ['"', "'", "said", "stated", "according to"]
         return any(ind in context.lower() for ind in quote_indicators)
+
+    def _is_technical_context(self, text: str, match: re.Match) -> bool:
+        """
+        Check if a match sits inside a technical/programming context.
+
+        Used to suppress false positives for short common words that also
+        appear in software engineering vocabulary, e.g.:
+          - "single" in "single-threaded" or "single page application"
+          - "parent" in "parent class" or "parent component"
+          - "partner" in "technology partner" or "channel partner"
+          - "blind"  in "blind review" or "double-blind study"
+          - "foreign" in "foreign key" or "foreign function interface"
+        """
+        context = self._get_context(text, match, window=40).lower()
+        technical_indicators = [
+            # OOP / programming
+            "class", "method", "function", "interface", "module",
+            "component", "process", "element", "node", "thread",
+            "threaded", "instance", "object", "library", "framework",
+            "api", "sdk", "algorithm", "protocol", "dependency",
+            # Data / DB
+            "key", "index", "constraint", "query", "database", "table",
+            "schema", "foreign key", "primary key",
+            # Research / testing
+            "review", "study", "test", "fold", "assessment", "trial",
+            # File system / OS
+            "directory", "folder", "path", "file",
+            # Business / channel (for "partner")
+            "technology", "business", "strategic", "channel", "ecosystem",
+            "integration", "program", "track",
+            # Web / UI
+            "application", "page", "source",
+        ]
+        return any(ind in context for ind in technical_indicators)
 
     def _get_context(
         self,

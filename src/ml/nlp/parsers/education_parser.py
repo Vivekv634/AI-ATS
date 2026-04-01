@@ -52,17 +52,17 @@ class EducationParser:
             r"d\.?phil\.?", r"doctorate",
         ],
         "master": [
-            r"master(?:'?s)?(?:\s+of)?", r"m\.?s\.?(?:\s|$)", r"m\.?a\.?(?:\s|$)",
-            r"m\.?b\.?a\.?", r"m\.?eng\.?", r"m\.?sc\.?", r"m\.?ed\.?",
-            r"mba", r"msc", r"ma(?:\s|$)",
+            r"master(?:'?s)?(?:\s+of)?", r"\bm\.?s\.?(?:\s|$)", r"\bm\.?a\.?(?:\s|$)",
+            r"\bm\.?b\.?a\.?", r"\bm\.?eng\.?", r"\bm\.?sc\.?", r"\bm\.?ed\.?",
+            r"\bmba\b", r"\bmsc\b", r"\bma(?:\s|$)",
         ],
         "bachelor": [
-            r"bachelor(?:'?s)?(?:\s+of)?", r"b\.?s\.?(?:\s|$)", r"b\.?a\.?(?:\s|$)",
-            r"b\.?eng\.?", r"b\.?sc\.?", r"b\.?tech\.?", r"b\.?e\.?(?:\s|$)",
-            r"bsc", r"ba(?:\s|$)", r"bs(?:\s|$)",
+            r"bachelor(?:'?s)?(?:\s+of)?", r"\bb\.?s\.?(?:\s|$)", r"\bb\.?a\.?(?:\s|$)",
+            r"\bb\.?eng\.?", r"\bb\.?sc\.?", r"\bb\.?tech\.?", r"\bb\.?e\.?(?:\s|$)",
+            r"\bbsc\b", r"\bba(?:\s|$)", r"\bbs(?:\s|$)",
         ],
         "associate": [
-            r"associate(?:'?s)?(?:\s+of)?", r"a\.?s\.?(?:\s|$)", r"a\.?a\.?(?:\s|$)",
+            r"associate(?:'?s)?(?:\s+of)?", r"\ba\.?s\.?(?:\s|$)", r"\ba\.?a\.?(?:\s|$)",
         ],
         "diploma": [
             r"diploma", r"certificate", r"certification",
@@ -172,13 +172,38 @@ class EducationParser:
             if entry and (entry.degree or entry.institution):
                 entries.append(entry)
 
+        # Merge adjacent orphan blocks: a degree-only entry immediately
+        # followed by an institution-only entry likely belongs together.
+        merged: list[ExtractedEducation] = []
+        i = 0
+        while i < len(entries):
+            current = entries[i]
+            if (
+                current.degree
+                and not current.institution
+                and i + 1 < len(entries)
+            ):
+                nxt = entries[i + 1]
+                if nxt.institution and not nxt.degree:
+                    # Merge: take institution, dates, gpa from the next entry
+                    current.institution = nxt.institution
+                    current.graduation_date = current.graduation_date or nxt.graduation_date
+                    current.start_date = current.start_date or nxt.start_date
+                    current.gpa = current.gpa or nxt.gpa
+                    current.confidence = max(current.confidence, nxt.confidence)
+                    merged.append(current)
+                    i += 2
+                    continue
+            merged.append(current)
+            i += 1
+
         # Sort by graduation date (most recent first)
-        entries.sort(
+        merged.sort(
             key=lambda e: e.graduation_date or date.min,
             reverse=True,
         )
 
-        return entries
+        return merged
 
     def _split_into_blocks(self, text: str) -> list[str]:
         """Split text into potential education blocks."""
@@ -274,22 +299,21 @@ class EducationParser:
             for pattern in patterns:
                 match = re.search(pattern, text_lower)
                 if match:
-                    # Try to get the full degree text
-                    # Look for common patterns like "Bachelor of Science"
-                    full_degree_patterns = [
-                        rf"({pattern})\s+(?:of\s+)?([A-Za-z\s]+?)(?:\s+in\s+([A-Za-z\s]+))?(?:[,\.\n]|$)",
-                        rf"({pattern})(?:[,\.\n]|$)",
-                    ]
-
-                    for fp in full_degree_patterns:
-                        full_match = re.search(fp, text, re.IGNORECASE)
-                        if full_match:
-                            degree_text = full_match.group(0).strip(" ,.\n")
-                            return {
-                                "degree": degree_text,
-                                "level": level,
-                            }
-
+                    # Find the line that contains the degree keyword and use
+                    # it as the degree name — this handles titles like
+                    # "Bachelor of Technology (B.Tech) in Computer Science"
+                    for line in text.splitlines():
+                        if re.search(pattern, line, re.IGNORECASE):
+                            # Strip pipe-separated metadata (dates, GPA, etc.)
+                            degree_text = re.split(r"\s*[|\-–—]\s*", line)[0]
+                            # Remove trailing parenthetical abbreviations only
+                            # if the main name is already long enough
+                            degree_text = degree_text.strip(" ,.\n")
+                            if degree_text and len(degree_text) >= 2:
+                                return {
+                                    "degree": degree_text,
+                                    "level": level,
+                                }
                     return {
                         "degree": match.group(0),
                         "level": level,
