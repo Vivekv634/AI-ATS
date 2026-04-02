@@ -125,16 +125,15 @@ class EmbeddingEducationScorer:
             score: float = 1.0 if education_entries else 0.7
             match: EducationMatch = EducationMatch(
                 required_degree=None,
-                candidate_degree=education_entries[0].degree if education_entries else None,
+                candidate_degree=self._best_degree(education_entries) or None,
                 meets_requirement=True,
                 score=score,
             )
             return match, round(score, 3)
 
-        # No candidate education
-        candidate_degree_text: str = (
-            education_entries[0].degree if education_entries else ""
-        )
+        # Select the highest-level degree across all education entries so that
+        # a candidate with both B.Tech and M.Tech is compared using M.Tech.
+        candidate_degree_text: str = self._best_degree(education_entries)
         if not candidate_degree_text:
             match = EducationMatch(
                 required_degree=required_degree,
@@ -211,6 +210,30 @@ class EmbeddingEducationScorer:
     # ------------------------------------------------------------------
     # Shared helpers
     # ------------------------------------------------------------------
+
+    @staticmethod
+    def _best_degree(
+        education_entries: list["EducationEntryType"],
+    ) -> str:
+        """Return the degree text from the highest-level education entry.
+
+        Iterates all entries and picks the one whose normalized level key
+        maps to the highest integer in EDUCATION_LEVELS. Falls back to the
+        first entry's degree when no level can be resolved.
+        """
+        if not education_entries:
+            return ""
+        best_text: str = ""
+        best_level: int = -1
+        for entry in education_entries:
+            if not entry.degree:
+                continue
+            level_key: str = EmbeddingEducationScorer._normalize_degree_level(entry.degree)
+            level: int = EDUCATION_LEVELS.get(level_key.lower(), 0)
+            if level > best_level:
+                best_level = level
+                best_text = entry.degree
+        return best_text or (education_entries[0].degree if education_entries else "")
 
     @staticmethod
     def _degree_level_score(

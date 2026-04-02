@@ -7,6 +7,8 @@ education matching, keyword matching, and semantic similarity.
 """
 from __future__ import annotations
 
+import datetime
+import re
 from collections import Counter
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Optional
@@ -42,9 +44,23 @@ from src.utils.logger import get_logger
 logger = get_logger(__name__)
 
 
+_KEYWORD_STOPWORDS: frozenset[str] = frozenset({
+    "with", "have", "will", "that", "this", "from", "your", "they",
+    "their", "what", "when", "where", "which", "would", "could",
+    "should", "must", "able", "about", "experience", "work", "team",
+})
+
+
+@dataclass
+class _MinimalPreprocessed:
+    """Thin preprocessed shim used by match_from_parsed() to satisfy _match_keywords."""
+
+    cleaned_text: str
+    sections: list = field(default_factory=list)
+
+
 def _estimate_years(duration: str) -> float:
     """Best-effort year estimate from a duration string like '2019-2022' or '2 years'."""
-    import re
     if not duration:
         return 1.0
     # "N years" or "N year"
@@ -59,7 +75,6 @@ def _estimate_years(duration: str) -> float:
     if re.search(r"\b(present|current|now)\b", duration, re.IGNORECASE):
         m_start = re.findall(r"\b(20\d{2}|19\d{2})\b", duration)
         if m_start:
-            import datetime
             years = datetime.date.today().year - int(m_start[0])
             return float(max(years, 1))
     # "YYYY - YYYY" or "YYYY–YYYY"
@@ -374,15 +389,8 @@ class MatchingEngine:
         )
 
         # Populate preprocessed so _match_keywords can find resume text
-        from dataclasses import dataclass as _dc
-
-        @_dc
-        class _MinimalPreprocessed:
-            cleaned_text: str
-            sections: list = None  # type: ignore[assignment]
-
         resume_shim.preprocessed = _MinimalPreprocessed(
-            cleaned_text=parsed.raw_text, sections=[]
+            cleaned_text=parsed.raw_text,
         )
 
         # -- Run all existing match sub-methods --------------------------------
@@ -776,24 +784,17 @@ class MatchingEngine:
         if not resume_text:
             return None, 0.0
 
-        # Common stopwords to exclude
-        stopwords = {
-            "with", "have", "will", "that", "this", "from", "your", "they",
-            "their", "what", "when", "where", "which", "would", "could",
-            "should", "must", "able", "about", "experience", "work", "team",
-        }
-
         # Count term frequency across responsibilities and qualifications.
         # Words that appear multiple times are more heavily emphasized by the
         # employer and therefore deserve a higher weight in the score.
         freq: Counter[str] = Counter()
         for resp in jd.responsibilities:
             for word in resp.lower().split():
-                if len(word) > 3 and word not in stopwords:
+                if len(word) > 3 and word not in _KEYWORD_STOPWORDS:
                     freq[word] += 1
         for qual in jd.qualifications:
             for word in qual.lower().split():
-                if len(word) > 3 and word not in stopwords:
+                if len(word) > 3 and word not in _KEYWORD_STOPWORDS:
                     freq[word] += 1
 
         if not freq:

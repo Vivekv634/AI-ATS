@@ -685,11 +685,19 @@ class SemanticMatcher:
                 else 0.0
             )
 
+            weighted_sim: float = round(
+                _SECTION_WEIGHTS["overall"] * overall_sim
+                + _SECTION_WEIGHTS["skills"] * skills_sim
+                + _SECTION_WEIGHTS["experience"] * exp_sim
+                + _SECTION_WEIGHTS["summary"] * summary_sim,
+                4,
+            )
             results.append((i, SemanticMatch(
                 overall_similarity=round(overall_sim, 4),
                 summary_similarity=round(summary_sim, 4),
                 skills_similarity=round(skills_sim, 4),
                 experience_similarity=round(exp_sim, 4),
+                weighted_similarity=weighted_sim,
                 model_used=self._model_name,
             )))
 

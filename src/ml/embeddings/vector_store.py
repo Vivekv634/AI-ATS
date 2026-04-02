@@ -683,10 +683,16 @@ def get_resume_store() -> VectorStore:
     global _resume_store
     if _resume_store is None:
         settings = get_settings()
-        _resume_store = get_vector_store(
-            collection_name="resume_embeddings",
-            persist_directory=settings.vector_store.persist_directory / "resumes",
-        )
+        provider: str = settings.vector_store.provider
+        if provider == "faiss":
+            _resume_store = FAISSVectorStore(
+                persist_path=settings.vector_store.persist_directory / "resumes",
+            )
+        else:
+            _resume_store = ChromaVectorStore(
+                collection_name="resume_embeddings",
+                persist_directory=settings.vector_store.persist_directory / "resumes",
+            )
     return _resume_store
 
 
@@ -695,8 +701,14 @@ def get_job_store() -> VectorStore:
     global _job_store
     if _job_store is None:
         settings = get_settings()
-        _job_store = get_vector_store(
-            collection_name="job_embeddings",
-            persist_directory=settings.vector_store.persist_directory / "jobs",
-        )
+        provider: str = settings.vector_store.provider
+        if provider == "faiss":
+            _job_store = FAISSVectorStore(
+                persist_path=settings.vector_store.persist_directory / "jobs",
+            )
+        else:
+            _job_store = ChromaVectorStore(
+                collection_name="job_embeddings",
+                persist_directory=settings.vector_store.persist_directory / "jobs",
+            )
     return _job_store
