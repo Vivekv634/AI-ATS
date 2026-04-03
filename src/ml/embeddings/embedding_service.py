@@ -71,12 +71,25 @@ class EmbeddingService:
             metadatas=[{
                 "candidate_id": candidate_id,
                 "candidate_name": parsed.contact.name,
-                "email": parsed.contact.email,
+                # email intentionally omitted — PII should not be stored in
+                # the vector store; look up contact info via candidate_id from
+                # the primary database when needed.
             }],
         )
 
         if self._repo is not None:
-            self._repo.set_embedding_id(candidate_id, embedding_id)
+            try:
+                self._repo.set_embedding_id(candidate_id, embedding_id)
+            except Exception:
+                # Link failed — delete the just-inserted embedding so the
+                # vector store and primary DB stay in sync (no orphaned vectors).
+                try:
+                    self._store.delete(ids=[embedding_id])
+                except Exception as del_exc:
+                    logger.warning(
+                        f"Failed to clean up orphaned embedding {embedding_id}: {del_exc}"
+                    )
+                raise
 
         logger.info(f"Embedded candidate {candidate_id} → {embedding_id}")
         return embedding_id

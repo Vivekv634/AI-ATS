@@ -159,8 +159,8 @@ class DomainAwareExperienceScorer:
         match: ExperienceMatch = ExperienceMatch(
             required_years=required_years,
             candidate_years=total_candidate_years,
-            years_difference=total_candidate_years - required_years,
-            meets_minimum=total_candidate_years >= required_years,
+            years_difference=relevant_years - required_years,
+            meets_minimum=relevant_years >= required_years,
             relevant_titles_matched=relevant_titles,
             score=score,
         )
