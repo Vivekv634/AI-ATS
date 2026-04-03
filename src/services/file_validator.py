@@ -10,9 +10,11 @@ from dataclasses import dataclass
 from pathlib import Path
 
 MAX_FILE_BYTES = 50 * 1024 * 1024  # 50 MB
-MIN_FILE_BYTES = 4  # must be enough for magic bytes check
+MIN_FILE_BYTES = 8  # must be enough for the longest magic-bytes check (DOC = 8 bytes)
 ALLOWED_EXTENSIONS = {".pdf", ".docx", ".doc"}
 PDF_MAGIC = b"%PDF"
+DOCX_MAGIC = b"PK\x03\x04"                         # .docx — ZIP-based (OOXML)
+DOC_MAGIC = b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1"   # .doc  — Compound File Binary (OLE2)
 
 
 @dataclass
@@ -88,12 +90,29 @@ class FileValidator:
             )
             return result
 
-        # PDF-specific checks
+        # Magic-byte checks — reject files whose content doesn't match the claimed extension.
         if ext == ".pdf":
             if not content.startswith(PDF_MAGIC):
                 result.ok = False
                 result.error = (
-                    f"File does not start with PDF magic bytes (%PDF). " f"Got: {content[:8]!r}"
+                    f"File does not start with PDF magic bytes (%PDF). "
+                    f"Got: {content[:8]!r}"
+                )
+                return result
+        elif ext == ".docx":
+            if not content.startswith(DOCX_MAGIC):
+                result.ok = False
+                result.error = (
+                    f"File does not start with DOCX/ZIP magic bytes (PK\\x03\\x04). "
+                    f"Got: {content[:8]!r}"
+                )
+                return result
+        elif ext == ".doc":
+            if not content.startswith(DOC_MAGIC):
+                result.ok = False
+                result.error = (
+                    f"File does not start with DOC/OLE2 magic bytes. "
+                    f"Got: {content[:8]!r}"
                 )
                 return result
 
