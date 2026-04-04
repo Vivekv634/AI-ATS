@@ -124,7 +124,6 @@ class MatchingWorker(QObject):
 
                     # Run matching via new typed pipeline
                     match_result = matching_engine.match_from_parsed(parsed, job_for_matching)
-                    match_results_list.append(match_result)
 
                     # Candidate name
                     name: str = parsed.contact.name or "Unknown Candidate"
@@ -159,7 +158,7 @@ class MatchingWorker(QObject):
                                 f"{', '.join(match_result.bias_check.protected_attributes_found)}"
                             )
 
-                    results.append({
+                    result_dict: dict = {
                         "candidate": name,
                         "email": parsed.contact.email or "",
                         "score": match_result.overall_score,
@@ -180,7 +179,12 @@ class MatchingWorker(QObject):
                         "bias_detected": bias_detected,
                         "bias_info": bias_info,
                         "file_path": resume_file,
-                    })
+                    }
+
+                    # Append to both lists atomically — they must stay in 1:1 sync
+                    # because the post-loop zip(match_results_list, results) relies on it.
+                    results.append(result_dict)
+                    match_results_list.append(match_result)
 
                 except Exception as e:
                     logger.warning(f"Error processing {resume_file}: {e}")

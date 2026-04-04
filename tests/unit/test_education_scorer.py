@@ -89,7 +89,7 @@ class TestExtractField:
 
     def test_bachelor_of_arts_returns_arts(self) -> None:
         result = EmbeddingEducationScorer._extract_field("Bachelor of Arts")
-        assert "Arts" in result or result == ""
+        assert result == "Arts"
 
 
 # ---------------------------------------------------------------------------

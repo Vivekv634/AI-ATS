@@ -139,3 +139,43 @@ def test_rerank_off_mode_reranked_is_always_false() -> None:
     rr2 = _ranked(_mr(0.7, ["group_b"]), 2, 0.7)
     result = FairnessReranker(RankingConfig(fairness_mode="off")).apply([rr1, rr2])
     assert all(not r.reranked for r in result)
+
+
+def test_get_group_composite_key_is_sorted() -> None:
+    # Attributes in different order must produce the same group key
+    mr_ab = _mr(0.8, ["attr_b", "attr_a"])
+    mr_ba = _mr(0.8, ["attr_a", "attr_b"])
+    rr_ab = _ranked(mr_ab, 1, 0.8)
+    rr_ba = _ranked(mr_ba, 2, 0.8)
+    assert FairnessReranker._get_group(rr_ab) == FairnessReranker._get_group(rr_ba)
+    assert FairnessReranker._get_group(rr_ab) == "attr_a|attr_b"
+
+
+def test_get_group_single_attribute_unchanged() -> None:
+    rr = _ranked(_mr(0.9, ["group_a"]), 1, 0.9)
+    assert FairnessReranker._get_group(rr) == "group_a"
+
+
+def test_get_group_returns_unknown_when_bias_check_is_none() -> None:
+    # match_result.bias_check = None must not raise; returns "unknown"
+    mr = MatchResult(candidate_name="X", overall_score=0.5, bias_check=None)
+    rr = RankedResult(match_result=mr, rank=1, effective_score=0.5)
+    assert FairnessReranker._get_group(rr) == "unknown"
+
+
+def test_rerank_large_in_band_selects_all_candidates() -> None:
+    # 10 group_a + 10 group_b, all in band — every candidate must appear exactly once
+    in_band = (
+        [_ranked(_mr(0.90, ["group_a"], f"A{i}"), i + 1, 0.90 - i * 0.001) for i in range(10)]
+        + [_ranked(_mr(0.89, ["group_b"], f"B{i}"), i + 11, 0.89 - i * 0.001) for i in range(10)]
+    )
+    result = FairnessReranker(
+        RankingConfig(fairness_mode="rerank", rerank_tolerance=0.10)
+    ).apply(in_band)
+
+    assert len(result) == 20
+    names_in = {r.match_result.candidate_name for r in in_band}
+    names_out = {r.match_result.candidate_name for r in result}
+    assert names_in == names_out  # same candidates, possibly reordered
+    ranks = [r.rank for r in result]
+    assert ranks == list(range(1, 21))  # ranks reassigned 1..20

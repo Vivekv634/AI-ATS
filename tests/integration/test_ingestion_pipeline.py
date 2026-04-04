@@ -16,6 +16,13 @@ from src.ml.nlp.accurate_resume_parser import ParsedResume
 RESUMES_DIR: Path = Path("data/raw/resumes")
 ALL_PDFS: list[Path] = list(RESUMES_DIR.glob("*.pdf"))
 
+# Skip the entire module gracefully when the test resume fixture is absent.
+# The file is personal data and not committed to the repository.
+pytestmark = pytest.mark.skipif(
+    not (RESUMES_DIR / "vivek_resume.pdf").exists(),
+    reason="vivek_resume.pdf not found in data/raw/resumes/ — integration tests require real resume fixtures",
+)
+
 
 # ---------------------------------------------------------------------------
 # In-memory repository stub

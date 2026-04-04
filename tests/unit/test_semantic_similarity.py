@@ -232,3 +232,80 @@ def test_matching_engine_uses_weighted_similarity_as_semantic_score() -> None:
         f"Expected semantic_score={known_weighted}, got {result.semantic_score}. "
         "matching_engine should use weighted_similarity, not overall_similarity."
     )
+
+
+# ── compute_similarity() helpers and fixture ─────────────────────────────────
+
+def _make_resume_result(
+    text: str = "Python developer with 5 years of experience building web apps.",
+    skills: list[dict] | None = None,
+) -> Mock:
+    """Minimal ResumeParseResult mock for compute_similarity() tests."""
+    result = Mock()
+    result.extraction_result.text = text
+    result.skills = skills or [{"name": "Python"}, {"name": "Django"}]
+    result.preprocessed = None  # forces fallback to extraction_result.text
+    return result
+
+
+def _make_jd_result(
+    raw_text: str = "Software engineer role requiring Python and SQL skills.",
+    required_skills: list[str] | None = None,
+    responsibilities: list[str] | None = None,
+    title: str = "Software Engineer",
+) -> Mock:
+    """Minimal JDParseResult mock for compute_similarity() tests."""
+    result = Mock()
+    result.raw_text = raw_text
+    result.required_skills = required_skills or ["Python", "SQL"]
+    result.preferred_skills = []
+    result.responsibilities = responsibilities or ["Build APIs", "Write tests"]
+    result.title = title
+    return result
+
+
+@pytest.fixture
+def mock_embedding_model() -> Mock:
+    """Deterministic embedding model stub that returns fixed 4-D unit vectors."""
+    import numpy as np
+    model = Mock()
+    single_vec = np.array([1.0, 0.0, 0.0, 0.0])
+    def _encode(texts, normalize=True, show_progress=False):
+        if isinstance(texts, str):
+            return single_vec.copy()
+        return np.stack([single_vec.copy() for _ in texts])
+    model.encode.side_effect = _encode
+    model.similarity.side_effect = lambda a, b: float(np.dot(a, b))
+    return model
+
+
+def test_compute_similarity_returns_nonzero_weighted_similarity(mock_embedding_model: Mock) -> None:
+    """compute_similarity() must return weighted_similarity > 0 when both sides have content."""
+    from src.ml.embeddings.semantic_similarity import SemanticMatcher
+    matcher = SemanticMatcher(embedding_model=mock_embedding_model)
+    resume = _make_resume_result()
+    jd = _make_jd_result()
+
+    result = matcher.compute_similarity(resume, jd)
+
+    assert result.weighted_similarity > 0.0, (
+        "compute_similarity() returned weighted_similarity=0.0; "
+        "it must compute the weighted combination of section scores."
+    )
+
+
+def test_compute_similarity_empty_inputs_return_zero_weighted_similarity(
+    mock_embedding_model: Mock,
+) -> None:
+    """compute_similarity() must return weighted_similarity=0.0 on empty resume or JD."""
+    from src.ml.embeddings.semantic_similarity import SemanticMatcher
+    matcher = SemanticMatcher(embedding_model=mock_embedding_model)
+
+    empty_resume = Mock()
+    empty_resume.extraction_result = None
+    empty_resume.preprocessed = None
+    empty_resume.skills = []
+    jd = _make_jd_result()
+
+    result = matcher.compute_similarity(empty_resume, jd)
+    assert result.weighted_similarity == 0.0

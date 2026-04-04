@@ -301,6 +301,23 @@ class TestExperienceMatchFields:
         )
         assert match.years_difference == pytest.approx(2.0)
 
+    def test_meets_minimum_false_for_irrelevant_experience(
+        self, scorer: DomainAwareExperienceScorer
+    ) -> None:
+        """5 years Java vs Python job requiring 3 years → meets_minimum must be False.
+
+        Total candidate years (5) exceeds required (3), but relevant years are 0
+        because Java [0,1,0,0] has zero cosine similarity with Python job [1,0,0,0].
+        meets_minimum should reflect domain-relevant years, not raw totals.
+        """
+        entries = [_entry("Java Developer", "5 years", ["built spring services"])]
+        match, _ = scorer.score_experience(
+            entries, required_years=3.0,
+            job_title="python backend", responsibilities=[],
+        )
+        assert match.meets_minimum is False
+        assert match.score == 0.0
+
 
 # ---------------------------------------------------------------------------
 # TestMatchingEngineWiring  (fast: no real model, no file I/O)

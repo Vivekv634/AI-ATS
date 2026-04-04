@@ -111,35 +111,122 @@ class SemanticMatcher:
         """
         Compute semantic similarity between a resume and job description.
 
+        Batches all four resume-side section texts into one encode() call.
+        JD-side texts are encoded individually so the EmbeddingModel LRU
+        cache serves them for free when the same job is matched against
+        multiple resumes.
+
         Args:
             resume_result: Parsed resume data.
             jd_result: Parsed job description data.
 
         Returns:
-            SemanticMatch with similarity scores.
+            SemanticMatch with similarity scores including weighted_similarity.
         """
-        # Extract text content
-        resume_text = self._get_resume_text(resume_result)
-        jd_text = jd_result.raw_text
+        # ── Extract full texts ────────────────────────────────────────────
+        resume_text: str = self._get_resume_text(resume_result)
+        jd_text: str = jd_result.raw_text
 
         if not resume_text or not jd_text:
             return SemanticMatch(model_used=self._model_name)
 
-        # Compute overall similarity
-        resume_embedding = self.embedding_model.encode(resume_text)
-        jd_embedding = self.embedding_model.encode(jd_text)
-        overall_sim = self.embedding_model.similarity(resume_embedding, jd_embedding)
+        # ── Build resume-side section texts ──────────────────────────────
+        candidate_skills: list[str] = [
+            s.get("name", "") for s in resume_result.skills if s.get("name")
+        ]
+        skills_a: str = ", ".join(candidate_skills)
 
-        # Compute section-specific similarities
-        skills_sim = self._compute_skills_similarity(resume_result, jd_result)
-        exp_sim = self._compute_experience_similarity(resume_result, jd_result)
-        summary_sim = self._compute_summary_similarity(resume_result, jd_result)
+        exp_parts: list[str] = []
+        if resume_result.preprocessed and resume_result.preprocessed.sections:
+            for section in resume_result.preprocessed.sections:
+                if section.section_type in ("experience", "work_history"):
+                    exp_parts.append(section.content)
+        exp_text: str = " ".join(exp_parts)
+
+        summary_text: str = ""
+        if resume_result.preprocessed and resume_result.preprocessed.sections:
+            for section in resume_result.preprocessed.sections:
+                if section.section_type in ("summary", "objective", "profile"):
+                    summary_text = section.content
+                    break
+        if not summary_text:
+            summary_text = resume_text[:500]
+
+        # ── Batch-encode all non-empty resume-side texts in one call ─────
+        _resume_texts: list[str] = [resume_text, skills_a, exp_text, summary_text]
+        _nonempty_idxs: list[int] = [i for i, t in enumerate(_resume_texts) if t]
+        _nonempty_txts: list[str] = [_resume_texts[i] for i in _nonempty_idxs]
+        _resume_embs: dict[int, np.ndarray] = {}
+        # index 0 (resume_text) is always non-empty here — the early-exit guard above
+        # ensures resume_text is truthy before we reach this point.
+        if _nonempty_txts:
+            _batch: np.ndarray = self.embedding_model.encode(_nonempty_txts)
+            for _pos, _orig_idx in enumerate(_nonempty_idxs):
+                _resume_embs[_orig_idx] = _batch[_pos]
+
+        # ── JD-side: individual calls (LRU cache hits after first use) ────
+        jd_full_emb: np.ndarray = self.embedding_model.encode(jd_text)
+
+        required_skills: list[str] = jd_result.required_skills + jd_result.preferred_skills
+        skills_b: str = ", ".join(required_skills)
+        jd_skills_emb: Optional[np.ndarray] = (
+            self.embedding_model.encode(skills_b) if skills_b else None
+        )
+
+        responsibilities_text: str = " ".join(jd_result.responsibilities)
+        jd_resp_emb: Optional[np.ndarray] = (
+            self.embedding_model.encode(responsibilities_text) if responsibilities_text else None
+        )
+
+        jd_summary: str = f"{jd_result.title}. {jd_text[:500]}"
+        jd_summary_emb: np.ndarray = self.embedding_model.encode(jd_summary)
+
+        # ── Compute section similarities ─────────────────────────────────
+        overall_sim: float = (
+            self.embedding_model.similarity(_resume_embs[0], jd_full_emb)
+            if 0 in _resume_embs else 0.0
+        )
+
+        if 1 in _resume_embs and jd_skills_emb is not None:
+            skills_sim: float = self.embedding_model.similarity(
+                _resume_embs[1], jd_skills_emb
+            )
+        else:
+            # 0.5 when neither side has skills (neutral); 0.0 when JD has required
+            # skills but resume has none — consistent with batch_compute_similarity().
+            # Note: compute_similarity_from_parsed() uses 0.5 unconditionally here.
+            skills_sim = 0.5 if not skills_b else 0.0
+
+        if 2 in _resume_embs and jd_resp_emb is not None:
+            exp_sim: float = self.embedding_model.similarity(
+                _resume_embs[2], jd_resp_emb
+            )
+        else:
+            # 0.5 when the JD lists no responsibilities (neutral); 0.0 when JD has
+            # responsibilities but resume has no experience sections.
+            # Note: compute_similarity_from_parsed() uses 0.0 unconditionally here.
+            exp_sim = 0.5 if not responsibilities_text else 0.0
+
+        summary_sim: float = (
+            self.embedding_model.similarity(_resume_embs[3], jd_summary_emb)
+            if 3 in _resume_embs else 0.0
+        )
+
+        # ── Weighted combination (mirrors compute_similarity_from_parsed) ─
+        weighted_sim: float = round(
+            _SECTION_WEIGHTS["overall"]      * overall_sim
+            + _SECTION_WEIGHTS["skills"]     * skills_sim
+            + _SECTION_WEIGHTS["experience"] * exp_sim
+            + _SECTION_WEIGHTS["summary"]    * summary_sim,
+            4,
+        )
 
         return SemanticMatch(
             overall_similarity=round(overall_sim, 4),
             summary_similarity=round(summary_sim, 4),
             skills_similarity=round(skills_sim, 4),
             experience_similarity=round(exp_sim, 4),
+            weighted_similarity=weighted_sim,
             model_used=self._model_name,
         )
 
@@ -431,7 +518,7 @@ class SemanticMatcher:
         resp_text: str = " ".join(job.responsibilities)
 
         summary_a: str = parsed.summary or resume_text[:500]
-        summary_b: str = f"{job.title}. {job.description[:500]}"
+        summary_b: str = f"{job.title}. {(job.description or '')[:500]}"
 
         # ── Batch-encode all 4 resume-side texts in one model call ───────────
         # JD-side texts are kept as individual calls so the LRU cache in
