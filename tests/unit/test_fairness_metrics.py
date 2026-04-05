@@ -2,6 +2,8 @@ import os
 os.environ.setdefault("APP_ENVIRONMENT", "testing")
 os.environ.setdefault("DB_NAME", "ai_ats_test")
 
+import math
+
 import pytest
 
 from src.ml.ethics.fairness_metrics import FairnessCalculator, FairnessMetrics
@@ -101,6 +103,48 @@ def test_small_group_excluded_with_name_in_warning() -> None:
     assert any("B" in w for w in result.warnings), (
         "Excluded group 'B' should be named in the warnings field, not silently dropped"
     )
+
+
+# ── Score variance ratio ───────────────────────────────────────────────────────
+
+def test_score_variance_ratio_normal_case() -> None:
+    """When both groups have different non-zero std, ratio is max/min variance."""
+    # Group A: tight scores (low std), Group B: spread scores (high std)
+    scores: list[float] = [0.8, 0.82, 0.81,   0.2, 0.9, 0.5]
+    labels: list[str]   = ["A", "A",  "A",    "B", "B", "B"]
+
+    result = _calc().calculate(scores, labels)
+
+    assert result.score_variance_ratio > 1.0, (
+        "Group B has higher score spread than A — variance ratio should exceed 1"
+    )
+
+
+def test_score_variance_ratio_is_inf_when_one_group_has_zero_std() -> None:
+    """When one group has identical scores (std=0), ratio must be inf, not 1.0."""
+    # Group A: all same score → std=0; Group B: different scores → std>0
+    scores: list[float] = [0.8, 0.8, 0.8,   0.3, 0.7, 0.9]
+    labels: list[str]   = ["A", "A", "A",   "B", "B", "B"]
+
+    result = _calc().calculate(scores, labels)
+
+    assert math.isinf(result.score_variance_ratio), (
+        "When a group has zero std, score_variance_ratio must be inf, not 1.0"
+    )
+    assert any("variance ratio" in w.lower() for w in result.warnings), (
+        "A warning must be emitted when score variance ratio is undefined"
+    )
+
+
+def test_score_variance_ratio_one_when_all_same_std() -> None:
+    """When all groups have the same std, ratio should be 1.0."""
+    # Both groups have symmetrically spread scores
+    scores: list[float] = [0.3, 0.7, 0.5,   0.3, 0.7, 0.5]
+    labels: list[str]   = ["A", "A", "A",   "B", "B", "B"]
+
+    result = _calc().calculate(scores, labels)
+
+    assert result.score_variance_ratio == pytest.approx(1.0, abs=1e-3)
 
 
 def test_small_groups_result_is_fair_when_no_eligible_groups() -> None:

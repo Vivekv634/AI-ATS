@@ -71,7 +71,13 @@ def _mock_model(similarity_values: list[float] | None = None):
             for i in range(n):
                 embs[i, i % DIM] = 1.0
             return embs
-        return np.ones(DIM) / np.sqrt(DIM)
+        # Single string (JD-side): derive a distinct unit vector from the text
+        # so that per-section routing bugs (wrong emb compared to wrong JD emb)
+        # are detectable — all-identical vectors would mask them.
+        dim_idx: int = abs(hash(texts)) % DIM
+        vec: np.ndarray = np.zeros(DIM)
+        vec[dim_idx] = 1.0
+        return vec
 
     mock.encode.side_effect = _encode
 
@@ -266,23 +272,41 @@ def _make_jd_result(
 
 @pytest.fixture
 def mock_embedding_model() -> Mock:
-    """Deterministic embedding model stub that returns fixed 4-D unit vectors."""
-    import numpy as np
+    """
+    Deterministic embedding model stub for compute_similarity() tests.
+
+    encode(str)  → content-hashed unit vector (distinct per text, catches
+                   per-section routing bugs where wrong resume emb is compared
+                   against wrong JD emb — aligned with _mock_model() behaviour)
+    encode(list) → one distinct unit vector per text (resume batch side)
+    similarity   → dot product of the two unit vectors
+    """
+    DIM: int = 4
     model = Mock()
-    single_vec = np.array([1.0, 0.0, 0.0, 0.0])
+
     def _encode(texts, normalize=True, show_progress=False):
         if isinstance(texts, str):
-            return single_vec.copy()
-        return np.stack([single_vec.copy() for _ in texts])
+            dim_idx: int = abs(hash(texts)) % DIM
+            vec = np.zeros(DIM)
+            vec[dim_idx] = 1.0
+            return vec
+        n = len(texts)
+        embs = np.zeros((n, DIM))
+        for i in range(n):
+            embs[i, i % DIM] = 1.0
+        return embs
+
     model.encode.side_effect = _encode
     model.similarity.side_effect = lambda a, b: float(np.dot(a, b))
     return model
 
 
-def test_compute_similarity_returns_nonzero_weighted_similarity(mock_embedding_model: Mock) -> None:
+def test_compute_similarity_returns_nonzero_weighted_similarity() -> None:
     """compute_similarity() must return weighted_similarity > 0 when both sides have content."""
     from src.ml.embeddings.semantic_similarity import SemanticMatcher
-    matcher = SemanticMatcher(embedding_model=mock_embedding_model)
+    # _mock_model() with no args returns similarity=0.6 for all section pairs,
+    # ensuring weighted_similarity > 0 without depending on vector alignment.
+    matcher = SemanticMatcher(embedding_model=_mock_model())
     resume = _make_resume_result()
     jd = _make_jd_result()
 
@@ -309,3 +333,23 @@ def test_compute_similarity_empty_inputs_return_zero_weighted_similarity(
 
     result = matcher.compute_similarity(empty_resume, jd)
     assert result.weighted_similarity == 0.0
+
+
+def test_compute_similarity_empty_jd_returns_zero_weighted_similarity(
+    mock_embedding_model: Mock,
+) -> None:
+    """compute_similarity() must return weighted_similarity=0.0 when JD has no text."""
+    from src.ml.embeddings.semantic_similarity import SemanticMatcher
+    matcher = SemanticMatcher(embedding_model=mock_embedding_model)
+
+    resume = _make_resume_result()
+    empty_jd = _make_jd_result(raw_text="")
+
+    result = matcher.compute_similarity(resume, empty_jd)
+    assert result.weighted_similarity == 0.0
+    # encode must never be called when the guard triggers
+    mock_embedding_model.encode.assert_not_called()
+    # _model_name lazy property must resolve to a non-empty string even on early exit
+    assert result.model_used is not None and result.model_used != "", (
+        "model_used must be a non-empty string even when returning a zero-score match"
+    )

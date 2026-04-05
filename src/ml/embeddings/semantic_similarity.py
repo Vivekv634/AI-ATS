@@ -6,6 +6,7 @@ between resumes and job descriptions using embeddings.
 """
 from __future__ import annotations
 
+import threading
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Optional
 
@@ -29,6 +30,12 @@ from .vector_store import (
 )
 
 logger = get_logger(__name__)
+
+# Section type names used when scanning preprocessed resume sections.
+# Centralised here so compute_similarity() and batch_compute_similarity() stay
+# in sync when new section types are added to the parser.
+_EXPERIENCE_SECTION_TYPES: frozenset[str] = frozenset({"experience", "work_history"})
+_SUMMARY_SECTION_TYPES: frozenset[str] = frozenset({"summary", "objective", "profile"})
 
 # Weights for combining per-section similarity scores into weighted_similarity.
 # Values sum to 1.0. Tuned to reflect relative job-matching importance:
@@ -80,7 +87,14 @@ class SemanticMatcher:
         self._embedding_model = embedding_model
         self._resume_store = resume_store
         self._job_store = job_store
-        self._model_name = get_settings().ml.embedding_model
+        self._model_name_cache: Optional[str] = None
+
+    @property
+    def _model_name(self) -> str:
+        """Lazily resolve the embedding model name from settings on first access."""
+        if self._model_name_cache is None:
+            self._model_name_cache = get_settings().ml.embedding_model
+        return self._model_name_cache
 
     @property
     def embedding_model(self) -> EmbeddingModel:
@@ -139,14 +153,14 @@ class SemanticMatcher:
         exp_parts: list[str] = []
         if resume_result.preprocessed and resume_result.preprocessed.sections:
             for section in resume_result.preprocessed.sections:
-                if section.section_type in ("experience", "work_history"):
+                if section.section_type in _EXPERIENCE_SECTION_TYPES:
                     exp_parts.append(section.content)
         exp_text: str = " ".join(exp_parts)
 
         summary_text: str = ""
         if resume_result.preprocessed and resume_result.preprocessed.sections:
             for section in resume_result.preprocessed.sections:
-                if section.section_type in ("summary", "objective", "profile"):
+                if section.section_type in _SUMMARY_SECTION_TYPES:
                     summary_text = section.content
                     break
         if not summary_text:
@@ -165,6 +179,10 @@ class SemanticMatcher:
                 _resume_embs[_orig_idx] = _batch[_pos]
 
         # ── JD-side: individual calls (LRU cache hits after first use) ────
+        # NOTE: jd_summary (title + first 500 chars) is always a distinct string
+        # from jd_text, so it is always a cache miss in this single-resume path.
+        # For multi-resume matching use batch_compute_similarity(), which encodes
+        # all four JD-side embeddings once and reuses them across all resumes.
         jd_full_emb: np.ndarray = self.embedding_model.encode(jd_text)
 
         required_skills: list[str] = jd_result.required_skills + jd_result.preferred_skills
@@ -207,10 +225,9 @@ class SemanticMatcher:
             # Note: compute_similarity_from_parsed() uses 0.0 unconditionally here.
             exp_sim = 0.5 if not responsibilities_text else 0.0
 
-        summary_sim: float = (
-            self.embedding_model.similarity(_resume_embs[3], jd_summary_emb)
-            if 3 in _resume_embs else 0.0
-        )
+        # index 3 (summary_text) is always present: the fallback to resume_text[:500]
+        # above guarantees summary_text is non-empty whenever resume_text is non-empty.
+        summary_sim: float = self.embedding_model.similarity(_resume_embs[3], jd_summary_emb)
 
         # ── Weighted combination (mirrors compute_similarity_from_parsed) ─
         weighted_sim: float = round(
@@ -238,92 +255,6 @@ class SemanticMatcher:
             return resume_result.preprocessed.cleaned_text
         return ""
 
-    def _compute_skills_similarity(
-        self,
-        resume_result: ResumeParseResult,
-        jd_result: JDParseResult,
-    ) -> float:
-        """Compute similarity between candidate skills and job requirements."""
-        # Get candidate skills text
-        candidate_skills = [s.get("name", "") for s in resume_result.skills if s.get("name")]
-        if not candidate_skills:
-            return 0.0
-
-        # Get required skills
-        required_skills = jd_result.required_skills + jd_result.preferred_skills
-        if not required_skills:
-            return 0.5
-
-        # Create skill text representations
-        candidate_skills_text = ", ".join(candidate_skills)
-        required_skills_text = ", ".join(required_skills)
-
-        # Compute similarity
-        candidate_emb = self.embedding_model.encode(candidate_skills_text)
-        required_emb = self.embedding_model.encode(required_skills_text)
-
-        return self.embedding_model.similarity(candidate_emb, required_emb)
-
-    def _compute_experience_similarity(
-        self,
-        resume_result: ResumeParseResult,
-        jd_result: JDParseResult,
-    ) -> float:
-        """Compute similarity between candidate experience and job requirements."""
-        # Extract experience text from resume
-        exp_text_parts = []
-        if resume_result.preprocessed and resume_result.preprocessed.sections:
-            for section in resume_result.preprocessed.sections:
-                if section.section_type in ["experience", "work_history"]:
-                    exp_text_parts.append(section.content)
-
-        if not exp_text_parts:
-            return 0.0
-
-        experience_text = " ".join(exp_text_parts)
-
-        # Get job responsibilities text
-        responsibilities_text = " ".join(jd_result.responsibilities)
-        if not responsibilities_text:
-            return 0.5
-
-        # Compute similarity
-        exp_emb = self.embedding_model.encode(experience_text)
-        resp_emb = self.embedding_model.encode(responsibilities_text)
-
-        return self.embedding_model.similarity(exp_emb, resp_emb)
-
-    def _compute_summary_similarity(
-        self,
-        resume_result: ResumeParseResult,
-        jd_result: JDParseResult,
-    ) -> float:
-        """Compute similarity between candidate summary and job description."""
-        # Extract summary from resume
-        summary_text = ""
-        if resume_result.preprocessed and resume_result.preprocessed.sections:
-            for section in resume_result.preprocessed.sections:
-                if section.section_type in ["summary", "objective", "profile"]:
-                    summary_text = section.content
-                    break
-
-        if not summary_text:
-            # Use first part of resume as summary
-            full_text = self._get_resume_text(resume_result)
-            summary_text = full_text[:500] if full_text else ""
-
-        if not summary_text:
-            return 0.0
-
-        # Get job summary (title + first part of description)
-        jd_summary = f"{jd_result.title}. {jd_result.raw_text[:500]}"
-
-        # Compute similarity
-        summary_emb = self.embedding_model.encode(summary_text)
-        jd_emb = self.embedding_model.encode(jd_summary)
-
-        return self.embedding_model.similarity(summary_emb, jd_emb)
-
     def index_resume(
         self,
         resume_id: str,
@@ -340,7 +271,7 @@ class SemanticMatcher:
         """
         resume_text = self._get_resume_text(resume_result)
         if not resume_text:
-            logger.warning(f"Cannot index resume {resume_id}: no text content")
+            logger.warning("Cannot index resume %s: no text content", resume_id)
             return
 
         embedding = self.embedding_model.encode(resume_text)
@@ -363,7 +294,7 @@ class SemanticMatcher:
             metadatas=[meta],
         )
 
-        logger.debug(f"Indexed resume: {resume_id}")
+        logger.debug("Indexed resume: %s", resume_id)
 
     def index_job(
         self,
@@ -381,7 +312,7 @@ class SemanticMatcher:
         """
         jd_text = jd_result.raw_text
         if not jd_text:
-            logger.warning(f"Cannot index job {job_id}: no text content")
+            logger.warning("Cannot index job %s: no text content", job_id)
             return
 
         embedding = self.embedding_model.encode(jd_text)
@@ -404,7 +335,7 @@ class SemanticMatcher:
             metadatas=[meta],
         )
 
-        logger.debug(f"Indexed job: {job_id}")
+        logger.debug("Indexed job: %s", job_id)
 
     def find_matching_candidates(
         self,
@@ -556,20 +487,24 @@ class SemanticMatcher:
                 _resume_embs[1], jd_skills_emb
             )
         else:
-            # Either candidate or job has no skills listed → neutral default
-            skills_sim = 0.5
+            # 0.5 when neither side has skills (neutral); 0.0 when job has required
+            # skills but candidate has none — matches compute_similarity() and
+            # batch_compute_similarity() fallback behaviour.
+            skills_sim = 0.5 if not skills_b else 0.0
 
         if 2 in _resume_embs and jd_resp_emb is not None:
             exp_sim: float = self.embedding_model.similarity(
                 _resume_embs[2], jd_resp_emb
             )
         else:
-            exp_sim = 0.0
+            # 0.5 when job lists no responsibilities (neutral); 0.0 when job has
+            # responsibilities but candidate has no experience sections — matches
+            # compute_similarity() and batch_compute_similarity() fallback behaviour.
+            exp_sim = 0.5 if not resp_text else 0.0
 
-        summary_sim: float = (
-            self.embedding_model.similarity(_resume_embs[3], jd_summary_emb)
-            if 3 in _resume_embs else 0.0
-        )
+        # index 3 (summary_a) is always present: the fallback to resume_text[:500]
+        # in _build_resume_text guarantees summary_a is non-empty when resume_text is.
+        summary_sim: float = self.embedding_model.similarity(_resume_embs[3], jd_summary_emb)
 
         # ── Weighted combination ──────────────────────────────────────────────
         weighted_sim: float = round(
@@ -633,19 +568,6 @@ class SemanticMatcher:
             parts.append(job.company_description)
         return " ".join(p for p in parts if p.strip())
 
-    def _section_similarity(
-        self,
-        text_a: str,
-        text_b: str,
-        default_when_empty: float = 0.0,
-    ) -> float:
-        """Compute similarity between two text sections; return default if either is empty."""
-        if not text_a or not text_b:
-            return default_when_empty
-        emb_a: np.ndarray = self.embedding_model.encode(text_a)
-        emb_b: np.ndarray = self.embedding_model.encode(text_b)
-        return self.embedding_model.similarity(emb_a, emb_b)
-
     def batch_compute_similarity(
         self,
         resume_results: list[ResumeParseResult],
@@ -690,9 +612,15 @@ class SemanticMatcher:
         # ── Filter to resumes that have extractable text ───────────────────
         resume_full_texts = [self._get_resume_text(r) for r in resume_results]
         valid_indices = [i for i, t in enumerate(resume_full_texts) if t]
+        skipped_indices = [i for i, t in enumerate(resume_full_texts) if not t]
+
+        for i in skipped_indices:
+            logger.warning(
+                "batch_compute_similarity: resume at index %d has no text — returning zero score", i
+            )
 
         if not valid_indices:
-            return []
+            return [(i, SemanticMatch(model_used=self._model_name)) for i in skipped_indices]
 
         valid_resumes = [resume_results[i] for i in valid_indices]
         valid_full_texts = [resume_full_texts[i] for i in valid_indices]
@@ -712,7 +640,7 @@ class SemanticMatcher:
             " ".join(
                 sec.content
                 for sec in (r.preprocessed.sections if r.preprocessed else [])
-                if sec.section_type in ("experience", "work_history")
+                if sec.section_type in _EXPERIENCE_SECTION_TYPES
             )
             for r in valid_resumes
         ]
@@ -722,7 +650,7 @@ class SemanticMatcher:
             text = ""
             if r.preprocessed and r.preprocessed.sections:
                 for sec in r.preprocessed.sections:
-                    if sec.section_type in ("summary", "objective", "profile"):
+                    if sec.section_type in _SUMMARY_SECTION_TYPES:
                         text = sec.content
                         break
             if not text:
@@ -788,16 +716,25 @@ class SemanticMatcher:
                 model_used=self._model_name,
             )))
 
-        return results
+        # Append zero-score entries for resumes that had no extractable text so
+        # that len(result) == len(resume_results) — callers can index by position.
+        for i in skipped_indices:
+            results.append((i, SemanticMatch(model_used=self._model_name)))
+
+        return sorted(results, key=lambda t: t[0])
 
 
-# Singleton instance
+# Singleton instance — guarded by a lock to prevent duplicate model construction
+# in multi-threaded contexts (e.g. PyQt6 worker threads for batch imports).
 _semantic_matcher: Optional[SemanticMatcher] = None
+_semantic_matcher_lock: threading.Lock = threading.Lock()
 
 
 def get_semantic_matcher() -> SemanticMatcher:
-    """Get the semantic matcher singleton instance."""
+    """Get the semantic matcher singleton instance (thread-safe)."""
     global _semantic_matcher
     if _semantic_matcher is None:
-        _semantic_matcher = SemanticMatcher()
+        with _semantic_matcher_lock:
+            if _semantic_matcher is None:
+                _semantic_matcher = SemanticMatcher()
     return _semantic_matcher

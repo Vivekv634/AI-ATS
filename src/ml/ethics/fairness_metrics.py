@@ -4,7 +4,9 @@ Fairness metrics calculation for bias detection.
 Implements various fairness metrics to measure and monitor
 bias in the candidate matching and ranking process.
 """
+from __future__ import annotations
 
+import threading
 from dataclasses import dataclass, field
 from typing import Optional
 
@@ -14,6 +16,12 @@ from src.utils.constants import FAIRNESS_MIN_GROUP_SIZE, FAIRNESS_THRESHOLDS
 from src.utils.logger import get_logger
 
 logger = get_logger(__name__)
+
+# np.std() on a constant array returns machine-epsilon (~1e-16) rather than
+# exactly 0.0.  Variances below this threshold are treated as zero when
+# computing score_variance_ratio so that all-same-score groups are correctly
+# detected as having zero spread.
+_VAR_EPS: float = 1e-10
 
 
 @dataclass
@@ -128,8 +136,11 @@ class FairnessCalculator:
         unique_groups = np.unique(group_labels)
 
         if len(unique_groups) < 2:
-            logger.warning("Less than 2 groups found, cannot calculate fairness metrics")
-            return FairnessMetrics(is_fair=True)
+            logger.warning("Fewer than 2 groups found, cannot calculate fairness metrics")
+            return FairnessMetrics(
+                is_fair=True,
+                warnings=["Fewer than 2 demographic groups found; fairness metrics cannot be calculated."],
+            )
 
         # Filter out groups that are too small to yield reliable statistics.
         # A single extra selection/rejection in a group of 3 moves its rate by
@@ -189,24 +200,27 @@ class FairnessCalculator:
         # Calculate Disparate Impact
         di_ratio = self._calculate_disparate_impact(group_positive_rates)
 
-        # Equalized odds requires real hiring outcomes to be meaningful.
-        # Warn and zero-out when outcomes were derived from scores.
-        if not _real_outcomes:
-            calc_warnings.append(
-                "Equalized odds requires real hiring outcomes (the `outcomes` argument) "
-                "to be meaningful. When outcomes are derived from scores, TPR/FPR values "
-                "are trivially determined by the threshold and do not measure bias. "
-                "Equalized odds values are set to 0 for this run."
-            )
-
         eo_diff, tpr_diff, fpr_diff = self._calculate_equalized_odds(
-            scores, group_labels, outcomes, unique_groups, selection_threshold, _real_outcomes
+            scores, group_labels, outcomes, unique_groups, selection_threshold,
+            _real_outcomes, calc_warnings,
         )
 
-        # Calculate score distribution metrics
+        # Calculate score distribution metrics.
+        # _VAR_EPS (module-level) guards against np.std machine-epsilon noise.
         score_gap = max(group_avg_scores.values()) - min(group_avg_scores.values())
-        variances = [m.score_std ** 2 for m in group_metrics if m.score_std > 0]
-        score_var_ratio = max(variances) / min(variances) if len(variances) >= 2 and min(variances) > 0 else 1.0
+        variances: list[float] = [m.score_std ** 2 for m in group_metrics]
+        if len(variances) >= 2 and min(variances) > _VAR_EPS:
+            score_var_ratio: float = max(variances) / min(variances)
+        elif len(variances) >= 2 and max(variances) > _VAR_EPS:
+            # One or more groups have effectively zero score variance (all candidates
+            # in that group received the same score).  The ratio is mathematically ∞ —
+            # using 1.0 would falsely signal "perfectly equal spread", masking the disparity.
+            score_var_ratio = float("inf")
+            calc_warnings.append(
+                "Score variance ratio is undefined: at least one group has zero score variance."
+            )
+        else:
+            score_var_ratio = 1.0
 
         # Check for violations
         violations = []
@@ -298,6 +312,7 @@ class FairnessCalculator:
         groups: np.ndarray,
         selection_threshold: float,
         real_outcomes: bool,
+        warnings_out: list[str] | None = None,
     ) -> tuple[float, float, float]:
         """
         Calculate equalized odds metrics.
@@ -308,7 +323,8 @@ class FairnessCalculator:
 
         Only meaningful when *real* outcomes are provided.  When outcomes are
         score-derived the caller must pass ``real_outcomes=False`` and this
-        method returns (0.0, 0.0, 0.0) to avoid reporting noise as signal.
+        method returns (0.0, 0.0, 0.0) to avoid reporting noise as signal, and
+        appends an explanatory message to ``warnings_out`` if provided.
 
         Args:
             scores: Match scores for all candidates.
@@ -318,16 +334,25 @@ class FairnessCalculator:
             selection_threshold: Score threshold used to derive predictions.
             real_outcomes: False when outcomes were derived from scores rather
                 than actual hiring decisions.
+            warnings_out: If provided, an explanatory warning is appended when
+                ``real_outcomes`` is False.
 
         Returns:
             (equalized_odds_diff, tpr_diff, fpr_diff)
         """
         if not real_outcomes:
+            if warnings_out is not None:
+                warnings_out.append(
+                    "Equalized odds requires real hiring outcomes (the `outcomes` argument) "
+                    "to be meaningful. When outcomes are derived from scores, TPR/FPR values "
+                    "are trivially determined by the threshold and do not measure bias. "
+                    "Equalized odds values are set to 0 for this run."
+                )
             return 0.0, 0.0, 0.0
 
         predicted: np.ndarray = scores >= selection_threshold
-        group_tprs: dict = {}
-        group_fprs: dict = {}
+        group_tprs: dict[str, float] = {}
+        group_fprs: dict[str, float] = {}
 
         for group in groups:
             mask: np.ndarray = group_labels == group
@@ -364,12 +389,16 @@ class FairnessCalculator:
         self,
         candidate_scores: list[tuple[str, float, dict]],
         similarity_threshold: float = 0.1,
-    ) -> dict[str, float]:
+    ) -> dict[str, float | int]:
         """
         Calculate individual fairness metrics.
 
         Individual fairness requires that similar individuals
         receive similar scores.
+
+        TODO: This method is not yet wired into the ranking pipeline.
+              It should be integrated with FairnessReranker.apply() and
+              covered by tests before being relied upon in production.
 
         Args:
             candidate_scores: List of (candidate_id, score, features) tuples
@@ -435,13 +464,17 @@ class FairnessCalculator:
         return matches / len(common_keys)
 
 
-# Singleton instance
+# Singleton instance — guarded by a lock to prevent duplicate construction
+# when multiple threads access the calculator concurrently.
 _calculator: Optional[FairnessCalculator] = None
+_calculator_lock: threading.Lock = threading.Lock()
 
 
 def get_fairness_calculator() -> FairnessCalculator:
-    """Get the fairness calculator singleton instance."""
+    """Get the fairness calculator singleton instance (thread-safe)."""
     global _calculator
     if _calculator is None:
-        _calculator = FairnessCalculator()
+        with _calculator_lock:
+            if _calculator is None:
+                _calculator = FairnessCalculator()
     return _calculator

@@ -66,9 +66,11 @@ def test_flag_mode_attaches_violations_when_bias_present() -> None:
         RankingConfig(fairness_mode="flag", fairness_min_group_size=5)
     ).apply(group_a + group_b)
 
-    # At least one result should carry a violation flag
+    # At least one result should carry a violation flag; content checked via
+    # len > 0 rather than substring matching to avoid coupling to FairnessCalculator
+    # message wording.
     all_flags = [flag for rr in result for flag in rr.fairness_flags]
-    assert any("parity" in f.lower() or "disparate" in f.lower() for f in all_flags)
+    assert len(all_flags) > 0, "Expected at least one fairness violation flag to be attached"
 
 
 def test_flag_mode_small_groups_produce_warnings_not_violations() -> None:
@@ -81,8 +83,14 @@ def test_flag_mode_small_groups_produce_warnings_not_violations() -> None:
     ).apply(group_a + group_b)
 
     all_flags = [flag for rr in result for flag in rr.fairness_flags]
-    # Warnings present (group too small), no violations triggered
-    assert any("minimum" in f.lower() or "excluded" in f.lower() for f in all_flags)
+    # Structural check: the sanitized UI flag we own exactly, no violation strings
+    expected_ui_flag = (
+        "Some groups excluded from fairness analysis "
+        "(minimum 5 candidates required per group)."
+    )
+    assert expected_ui_flag in all_flags, (
+        f"Expected sanitized small-group flag not found. Flags: {all_flags}"
+    )
     assert not any("exceeds threshold" in f or "below threshold" in f for f in all_flags)
 
 
@@ -158,9 +166,75 @@ def test_get_group_single_attribute_unchanged() -> None:
 
 def test_get_group_returns_unknown_when_bias_check_is_none() -> None:
     # match_result.bias_check = None must not raise; returns "unknown"
-    mr = MatchResult(candidate_name="X", overall_score=0.5, bias_check=None)
+    # Use _mr() so all required MatchResult fields are supplied.
+    mr = _mr(0.5, protected_attrs=None, name="X")
+    mr.bias_check = None  # override the default BiasCheckResult to None
     rr = RankedResult(match_result=mr, rank=1, effective_score=0.5)
     assert FairnessReranker._get_group(rr) == "unknown"
+
+
+def test_rerank_mode_attaches_flags_and_changes_order() -> None:
+    # Verify that "rerank" mode does BOTH: populates fairness_flags (violation
+    # path) AND reorders within the tolerance band (diversity path).
+    # Group A monopolises the top 3 slots; group B is under-represented.
+    # The extreme score gap (0.9 vs 0.2) guarantees a demographic parity violation.
+    in_band = [
+        _ranked(_mr(0.9, ["group_a"], "A1"), 1, 0.90),
+        _ranked(_mr(0.9, ["group_a"], "A2"), 2, 0.89),
+        _ranked(_mr(0.9, ["group_a"], "A3"), 3, 0.88),
+        _ranked(_mr(0.9, ["group_b"], "B1"), 4, 0.87),
+        _ranked(_mr(0.9, ["group_b"], "B2"), 5, 0.86),
+        _ranked(_mr(0.9, ["group_b"], "B3"), 6, 0.85),
+    ]
+    out_of_band = [
+        _ranked(_mr(0.2, ["group_b"], "B4"), 7, 0.20),
+        _ranked(_mr(0.2, ["group_b"], "B5"), 8, 0.19),
+        _ranked(_mr(0.2, ["group_b"], "B6"), 9, 0.18),
+        _ranked(_mr(0.2, ["group_b"], "B7"), 10, 0.17),
+        _ranked(_mr(0.2, ["group_b"], "B8"), 11, 0.16),
+    ]
+
+    result = FairnessReranker(
+        RankingConfig(
+            fairness_mode="rerank",
+            fairness_min_group_size=3,
+            rerank_tolerance=0.10,
+        )
+    ).apply(in_band + out_of_band)
+
+    # Diversity reranking must have changed at least one position
+    assert any(r.reranked for r in result), "Expected reranking to occur within the band"
+
+    # A group_b candidate must have been promoted into the top 3
+    top3_names = [r.match_result.candidate_name for r in result[:3]]
+    assert any(n.startswith("B") for n in top3_names), (
+        "Expected at least one group_b candidate in top 3 after reranking"
+    )
+
+    # Violation flags must ALSO be attached (both phases run)
+    all_flags = [f for r in result for f in r.fairness_flags]
+    assert len(all_flags) > 0, "Expected fairness violation flags to be attached in rerank mode"
+
+
+def test_rerank_zero_tolerance_returns_original_order() -> None:
+    # tolerance=0.0 means threshold = top_score - 0.0 = 0.9 (float-exactly).
+    # The band condition is effective_score >= threshold, so:
+    #   rr1 (0.9 >= 0.9) → in_band   [1 element only — guard returns early]
+    #   rr2 (0.8 < 0.9)  → out_of_band
+    #   rr3 (0.7 < 0.9)  → out_of_band
+    # With ≤1 element in the band there is nothing to reorder, so the original
+    # list must be returned unchanged and no candidate is marked reranked.
+    rr1 = _ranked(_mr(0.9, ["group_a"], "A1"), 1, 0.9)
+    rr2 = _ranked(_mr(0.8, ["group_b"], "B1"), 2, 0.8)
+    rr3 = _ranked(_mr(0.7, ["group_b"], "B2"), 3, 0.7)
+    ranked_input = [rr1, rr2, rr3]
+
+    result = FairnessReranker(
+        RankingConfig(fairness_mode="rerank", rerank_tolerance=0.0)
+    ).apply(ranked_input)
+
+    assert [r.match_result.candidate_name for r in result] == ["A1", "B1", "B2"]
+    assert not any(r.reranked for r in result)
 
 
 def test_rerank_large_in_band_selects_all_candidates() -> None:

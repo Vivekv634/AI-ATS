@@ -62,7 +62,11 @@ class FairnessReranker:
                 logger.debug("FairnessReranker [internal]: %s", msg)
 
         ui_flags: list[str] = list(metrics.violations)
-        if metrics.warnings and any("excluded" in w for w in metrics.warnings):
+        # Compare unique group count against eligible groups that produced metrics.
+        # The >1 guard prevents the flag firing on single-group inputs where
+        # FairnessCalculator returns an empty group_metrics list by design.
+        _unique_group_count: int = len(set(group_labels))
+        if _unique_group_count > 1 and _unique_group_count > len(metrics.group_metrics):
             ui_flags.append(
                 f"Some groups excluded from fairness analysis "
                 f"(minimum {self._config.fairness_min_group_size} candidates required per group)."
@@ -100,6 +104,11 @@ class FairnessReranker:
             rr for rr in ranked if rr.effective_score < threshold
         ]
 
+        # With tolerance=0.0, float-exact equality means in_band may contain
+        # only the top candidate — nothing to reorder, return unchanged.
+        if len(in_band) <= 1:
+            return ranked
+
         original_positions: dict[int, int] = {
             id(rr): i for i, rr in enumerate(ranked)
         }
@@ -117,7 +126,7 @@ class FairnessReranker:
             )
             best: RankedResult = remaining[best_idx]
             reordered_band.append(best)
-            group_selected[FairnessReranker._get_group(best)] += 1
+            group_selected[self._get_group(best)] += 1
             # O(1) removal: overwrite selected slot with last item, then pop.
             # Order of remaining does not matter — _pick_next scans all entries anyway.
             remaining[best_idx] = remaining[-1]
