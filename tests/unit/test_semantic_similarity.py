@@ -353,3 +353,193 @@ def test_compute_similarity_empty_jd_returns_zero_weighted_similarity(
     assert result.model_used is not None and result.model_used != "", (
         "model_used must be a non-empty string even when returning a zero-score match"
     )
+
+
+# ── batch_compute_similarity ──────────────────────────────────────────────────
+
+def test_batch_compute_similarity_returns_one_result_per_resume() -> None:
+    """Result list length must equal the number of input resumes."""
+    from src.ml.embeddings.semantic_similarity import SemanticMatcher
+
+    resumes = [_make_resume_result() for _ in range(4)]
+    jd = _make_jd_result()
+    matcher = SemanticMatcher(embedding_model=_mock_model())
+
+    results = matcher.batch_compute_similarity(resumes, jd)
+
+    assert len(results) == 4, "One (index, SemanticMatch) tuple expected per resume"
+
+
+def test_batch_compute_similarity_indices_are_sorted() -> None:
+    """Returned tuples must be sorted by the original resume index."""
+    from src.ml.embeddings.semantic_similarity import SemanticMatcher
+
+    resumes = [_make_resume_result(text=f"resume {i}") for i in range(3)]
+    jd = _make_jd_result()
+    matcher = SemanticMatcher(embedding_model=_mock_model())
+
+    results = matcher.batch_compute_similarity(resumes, jd)
+    indices = [idx for idx, _ in results]
+
+    assert indices == sorted(indices), "Results must be sorted by original resume index"
+
+
+def test_batch_compute_similarity_all_resumes_empty_returns_zero_scores() -> None:
+    """When every resume has no extractable text, all weighted_similarity values are 0."""
+    from src.ml.embeddings.semantic_similarity import SemanticMatcher
+
+    empty_resume = Mock()
+    empty_resume.extraction_result = None
+    empty_resume.preprocessed = None
+    empty_resume.skills = []
+    jd = _make_jd_result()
+    matcher = SemanticMatcher(embedding_model=_mock_model())
+
+    results = matcher.batch_compute_similarity([empty_resume, empty_resume], jd)
+
+    assert len(results) == 2
+    for _, sm in results:
+        assert sm.weighted_similarity == 0.0
+
+
+def test_batch_compute_similarity_nonzero_scores_for_valid_resumes() -> None:
+    """Valid resumes must produce weighted_similarity > 0."""
+    from src.ml.embeddings.semantic_similarity import SemanticMatcher
+
+    resumes = [_make_resume_result() for _ in range(3)]
+    jd = _make_jd_result()
+    matcher = SemanticMatcher(embedding_model=_mock_model())
+
+    results = matcher.batch_compute_similarity(resumes, jd)
+
+    for _, sm in results:
+        assert sm.weighted_similarity > 0.0, (
+            "batch_compute_similarity should return non-zero scores for valid resumes"
+        )
+
+
+def test_batch_compute_similarity_mixed_valid_and_empty_resumes() -> None:
+    """Empty resumes get zero score; valid resumes get non-zero score in the same batch."""
+    from src.ml.embeddings.semantic_similarity import SemanticMatcher
+
+    valid = _make_resume_result()
+    empty = Mock()
+    empty.extraction_result = None
+    empty.preprocessed = None
+    empty.skills = []
+
+    matcher = SemanticMatcher(embedding_model=_mock_model())
+    results = matcher.batch_compute_similarity([valid, empty, valid], jd_result=_make_jd_result())
+
+    result_map = {idx: sm for idx, sm in results}
+    assert result_map[0].weighted_similarity > 0.0, "Index 0 (valid) should have non-zero score"
+    assert result_map[1].weighted_similarity == 0.0, "Index 1 (empty) should have zero score"
+    assert result_map[2].weighted_similarity > 0.0, "Index 2 (valid) should have non-zero score"
+
+
+def test_batch_compute_similarity_jd_embeddings_encoded_once() -> None:
+    """All four JD-side embeddings must be computed exactly once, regardless of resume count."""
+    from src.ml.embeddings.semantic_similarity import SemanticMatcher
+
+    mock = _mock_model()
+    resumes = [_make_resume_result() for _ in range(5)]
+    jd = _make_jd_result(
+        raw_text="Engineering role at Acme.",
+        required_skills=["Python"],
+        responsibilities=["Build APIs"],
+    )
+
+    SemanticMatcher(embedding_model=mock).batch_compute_similarity(resumes, jd)
+
+    # Each string call to encode() is a JD-side or a batch call.
+    # String calls (non-list) are JD-side — there should be exactly 4
+    # (jd_full, jd_skills, jd_resp, jd_summary).
+    str_calls = [c for c in mock.encode.call_args_list if isinstance(c.args[0], str)]
+    assert len(str_calls) == 4, (
+        f"Expected 4 JD-side encode calls (full, skills, resp, summary), got {len(str_calls)}"
+    )
+
+
+# ── index_resume / index_job ──────────────────────────────────────────────────
+
+def test_index_resume_calls_upsert_with_resume_id() -> None:
+    """index_resume must call vector store upsert with the supplied resume_id."""
+    from src.ml.embeddings.semantic_similarity import SemanticMatcher
+
+    mock_store = Mock()
+    mock_store.upsert = Mock()
+    matcher = SemanticMatcher(
+        embedding_model=_mock_model(),
+        resume_store=mock_store,
+    )
+
+    resume = _make_resume_result(text="Python developer.")
+    matcher.index_resume("resume-42", resume)
+
+    mock_store.upsert.assert_called_once()
+    call_kwargs = mock_store.upsert.call_args
+    ids_arg: list[str] = call_kwargs.kwargs.get("ids") or call_kwargs.args[0]
+    assert ids_arg == ["resume-42"], "upsert must be called with the provided resume_id"
+
+
+def test_index_resume_skips_upsert_when_no_text() -> None:
+    """index_resume must not call upsert and must log a warning when resume has no text."""
+    from unittest.mock import patch
+    from src.ml.embeddings.semantic_similarity import SemanticMatcher
+
+    mock_store = Mock()
+    empty_resume = Mock()
+    empty_resume.extraction_result = None
+    empty_resume.preprocessed = None
+
+    matcher = SemanticMatcher(embedding_model=_mock_model(), resume_store=mock_store)
+
+    with patch("src.ml.embeddings.semantic_similarity.logger") as mock_logger:
+        matcher.index_resume("no-text-resume", empty_resume)
+
+    mock_store.upsert.assert_not_called()
+    mock_logger.warning.assert_called_once()
+    warning_args: tuple = mock_logger.warning.call_args.args
+    assert "no-text-resume" in warning_args[1], (
+        "The warning must include the resume_id so operators can trace the skipped entry"
+    )
+
+
+def test_index_job_calls_upsert_with_job_id() -> None:
+    """index_job must call vector store upsert with the supplied job_id."""
+    from src.ml.embeddings.semantic_similarity import SemanticMatcher
+
+    mock_store = Mock()
+    mock_store.upsert = Mock()
+    matcher = SemanticMatcher(
+        embedding_model=_mock_model(),
+        job_store=mock_store,
+    )
+
+    jd = _make_jd_result(raw_text="Build scalable APIs in Python.")
+    matcher.index_job("job-99", jd)
+
+    mock_store.upsert.assert_called_once()
+    call_kwargs = mock_store.upsert.call_args
+    ids_arg: list[str] = call_kwargs.kwargs.get("ids") or call_kwargs.args[0]
+    assert ids_arg == ["job-99"], "upsert must be called with the provided job_id"
+
+
+def test_index_job_skips_upsert_when_no_text() -> None:
+    """index_job must not call upsert and must log a warning when JD has no text."""
+    from unittest.mock import patch
+    from src.ml.embeddings.semantic_similarity import SemanticMatcher
+
+    mock_store = Mock()
+    empty_jd = _make_jd_result(raw_text="")
+    matcher = SemanticMatcher(embedding_model=_mock_model(), job_store=mock_store)
+
+    with patch("src.ml.embeddings.semantic_similarity.logger") as mock_logger:
+        matcher.index_job("no-text-job", empty_jd)
+
+    mock_store.upsert.assert_not_called()
+    mock_logger.warning.assert_called_once()
+    warning_args: tuple = mock_logger.warning.call_args.args
+    assert "no-text-job" in warning_args[1], (
+        "The warning must include the job_id so operators can trace the skipped entry"
+    )

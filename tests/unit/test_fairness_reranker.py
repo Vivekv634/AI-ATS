@@ -237,6 +237,20 @@ def test_rerank_zero_tolerance_returns_original_order() -> None:
     assert not any(r.reranked for r in result)
 
 
+def test_apply_empty_list_flag_mode_returns_empty() -> None:
+    # FairnessReranker.apply() has an early-return guard: `if not ranked`.
+    # This must fire even when fairness_mode is "flag" — not just "off".
+    result = FairnessReranker(RankingConfig(fairness_mode="flag")).apply([])
+    assert result == [], "apply([]) in flag mode must return an empty list without raising"
+
+
+def test_apply_empty_list_rerank_mode_returns_empty() -> None:
+    # Same guard must also fire in "rerank" mode so _diversity_rerank is never
+    # called with an empty list.
+    result = FairnessReranker(RankingConfig(fairness_mode="rerank")).apply([])
+    assert result == [], "apply([]) in rerank mode must return an empty list without raising"
+
+
 def test_rerank_large_in_band_selects_all_candidates() -> None:
     # 10 group_a + 10 group_b, all in band — every candidate must appear exactly once
     in_band = (

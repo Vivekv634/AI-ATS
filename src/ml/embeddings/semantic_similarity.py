@@ -211,8 +211,8 @@ class SemanticMatcher:
             )
         else:
             # 0.5 when neither side has skills (neutral); 0.0 when JD has required
-            # skills but resume has none — consistent with batch_compute_similarity().
-            # Note: compute_similarity_from_parsed() uses 0.5 unconditionally here.
+            # skills but resume has none — consistent with batch_compute_similarity()
+            # and compute_similarity_from_parsed().
             skills_sim = 0.5 if not skills_b else 0.0
 
         if 2 in _resume_embs and jd_resp_emb is not None:

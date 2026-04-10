@@ -34,7 +34,7 @@ class FileValidator:
     Returns a ValidationResult — never raises.
     """
 
-    def validate_path(self, path: "str | Path") -> ValidationResult:
+    def validate_path(self, path: str | Path) -> ValidationResult:
         path = Path(path)
         ext = path.suffix.lower()
         result = ValidationResult(extension=ext)
@@ -61,7 +61,7 @@ class FileValidator:
 
         if ext not in ALLOWED_EXTENSIONS:
             result.ok = False
-            result.error = f"Unsupported extension '{ext}'"
+            result.error = f"Unsupported extension '{ext}'. Allowed: {sorted(ALLOWED_EXTENSIONS)}"
             return result
 
         return self._validate_content(content, ext, result)
