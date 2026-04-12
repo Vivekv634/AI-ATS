@@ -4,7 +4,7 @@ Base model classes for AI-ATS data models.
 Provides common fields and functionality shared across all models.
 """
 
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Optional
 
 from bson import ObjectId
@@ -44,8 +44,8 @@ class PyObjectId(ObjectId):
 class TimestampMixin(BaseModel):
     """Mixin providing timestamp fields for models."""
 
-    created_at: datetime = Field(default_factory=datetime.utcnow)
-    updated_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 
 class BaseDocument(TimestampMixin):
@@ -58,7 +58,6 @@ class BaseDocument(TimestampMixin):
     model_config = ConfigDict(
         populate_by_name=True,
         arbitrary_types_allowed=True,
-        json_encoders={ObjectId: str, datetime: lambda v: v.isoformat()},
         use_enum_values=True,
     )
 

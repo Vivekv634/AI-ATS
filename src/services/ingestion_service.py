@@ -137,7 +137,7 @@ class IngestionService:
             finally:
                 os.unlink(tmp_path)
         except Exception as exc:
-            logger.error(f"Parsing failed for {filename}: {exc}")
+            logger.exception(f"Parsing failed for {filename}: {exc}")
             result.status = "error"
             result.error_message = f"Parse error: {exc}"
             result.processing_time_ms = int((time.monotonic() - t0) * 1000)
@@ -154,7 +154,7 @@ class IngestionService:
             result.candidate_id = str(candidate_doc.id) if candidate_doc else None  # type: ignore[union-attr]
             result.status = "success"
         except Exception as exc:
-            logger.error(f"DB upsert failed for {filename}: {exc}")
+            logger.exception(f"DB upsert failed for {filename}: {exc}")
             result.status = "error"
             result.error_message = f"Storage error: {exc}"
 

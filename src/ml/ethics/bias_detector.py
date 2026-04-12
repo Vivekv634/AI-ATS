@@ -6,7 +6,7 @@ and bias mitigation to ensure fair candidate evaluation.
 """
 
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Optional
 
 from src.data.models import BiasCheckResult
@@ -56,7 +56,7 @@ class BiasAnalysisResult:
     recommendations: list[str] = field(default_factory=list)
 
     # Audit trail
-    analyzed_at: datetime = field(default_factory=datetime.utcnow)
+    analyzed_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     model_version: str = "1.0"
 
 

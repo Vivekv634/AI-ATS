@@ -184,7 +184,7 @@ class GoogleDriveService:
             return True
 
         except Exception as e:
-            logger.error(f"Google Drive authentication failed: {e}")
+            logger.exception(f"Google Drive authentication failed: {e}")
             return False
 
     def list_folders(self, parent_id: str = "root") -> list[DriveFile]:
@@ -224,7 +224,7 @@ class GoogleDriveService:
             return folders
 
         except Exception as e:
-            logger.error(f"Failed to list folders: {e}")
+            logger.exception(f"Failed to list folders: {e}")
             return []
 
     def list_resume_files(self, folder_id: str) -> list[DriveFile]:
@@ -278,7 +278,7 @@ class GoogleDriveService:
             return files
 
         except Exception as e:
-            logger.error(f"Failed to list files: {e}")
+            logger.exception(f"Failed to list files: {e}")
             return []
 
     def download_file(self, file_id: str, output_path: Path) -> bool:
@@ -313,7 +313,7 @@ class GoogleDriveService:
             return True
 
         except Exception as e:
-            logger.error(f"Failed to download file {file_id}: {e}")
+            logger.exception(f"Failed to download file {file_id}: {e}")
             return False
 
     def download_file_to_bytes(self, file_id: str) -> Optional[bytes]:
@@ -344,7 +344,7 @@ class GoogleDriveService:
             return buffer.getvalue()
 
         except Exception as e:
-            logger.error(f"Failed to download file {file_id}: {e}")
+            logger.exception(f"Failed to download file {file_id}: {e}")
             return None
 
     def download_resumes_from_folder(
@@ -443,7 +443,7 @@ class GoogleDriveService:
             return buffer.getvalue().decode("utf-8")
 
         except Exception as e:
-            logger.error(f"Failed to export sheet {file_id} as CSV: {e}")
+            logger.exception(f"Failed to export sheet {file_id} as CSV: {e}")
             return None
 
     def get_forms_response_folder(self, form_name: str) -> Optional[str]:
@@ -482,7 +482,7 @@ class GoogleDriveService:
             return None
 
         except Exception as e:
-            logger.error(f"Failed to find form folder: {e}")
+            logger.exception(f"Failed to find form folder: {e}")
             return None
 
 

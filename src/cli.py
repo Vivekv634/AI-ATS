@@ -16,6 +16,10 @@ from rich.table import Table
 # Ensure src is in path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
+from src.utils.logger import get_logger
+
+logger = get_logger(__name__)
+
 app = typer.Typer(
     name="ai-ats",
     help="AI-Powered Applicant Tracking System CLI",
@@ -83,6 +87,7 @@ def init_db():
         console.print("\n[green]Database initialized successfully![/green]")
 
     except Exception as e:
+        logger.exception(f"Database initialization failed: {e}")
         console.print(f"[red]Error initializing database: {e}[/red]")
         raise typer.Exit(1)
 
@@ -168,6 +173,7 @@ def import_resumes(
                     error_count += 1
 
             except Exception as e:
+                logger.debug(f"Failed to process resume {resume_file}: {e}")
                 errors.append((resume_file, str(e)))
                 error_count += 1
 
@@ -232,6 +238,7 @@ def create_job(
             description = jd_result.raw_text
             console.print("  [green]✓[/green] Job description parsed")
         except Exception as e:
+            logger.exception(f"Failed to parse job description file: {e}")
             console.print(f"[red]Error parsing job description: {e}[/red]")
             raise typer.Exit(1)
     else:
@@ -301,6 +308,7 @@ def create_job(
         console.print("\n[green]Job created successfully![/green]")
 
     except Exception as e:
+        logger.exception(f"Failed to create job: {e}")
         console.print(f"[red]Error creating job: {e}[/red]")
         raise typer.Exit(1)
 
@@ -331,6 +339,7 @@ def warmup():
             embedding_model.encode("test warmup sentence")
             progress.update(task, description="[green]✓[/green] Embedding model loaded")
         except Exception as e:
+            logger.warning(f"Warmup: embedding model failed to load: {e}")
             progress.update(task, description=f"[red]✗[/red] Embedding model failed: {e}")
 
         # Load NLP parser
@@ -340,6 +349,7 @@ def warmup():
             parser = get_resume_parser()
             progress.update(task2, description="[green]✓[/green] NLP parser loaded")
         except Exception as e:
+            logger.warning(f"Warmup: NLP parser failed to load: {e}")
             progress.update(task2, description=f"[red]✗[/red] NLP parser failed: {e}")
 
         # Load bias detector
@@ -349,6 +359,7 @@ def warmup():
             detector = get_bias_detector()
             progress.update(task3, description="[green]✓[/green] Bias detector loaded")
         except Exception as e:
+            logger.warning(f"Warmup: bias detector failed to load: {e}")
             progress.update(task3, description=f"[red]✗[/red] Bias detector failed: {e}")
 
         # Load explainer
@@ -358,6 +369,7 @@ def warmup():
             explainer = get_match_explainer()
             progress.update(task4, description="[green]✓[/green] Explainer loaded")
         except Exception as e:
+            logger.warning(f"Warmup: explainer failed to load: {e}")
             progress.update(task4, description=f"[red]✗[/red] Explainer failed: {e}")
 
     console.print("\n[green]Model warmup completed![/green]")
@@ -469,6 +481,7 @@ def match(
                 results.append((candidate, match_result))
 
             except Exception as e:
+                logger.debug(f"Match error for candidate {candidate.contact.email}: {e}")
                 console.print(f"[dim]  Error matching {candidate.contact.email}: {e}[/dim]")
 
             progress.update(task, advance=1)
@@ -871,8 +884,8 @@ def stats():
             console.print(f"  Average Score: {score_stats.get('avg_score', 0):.1%}")
             console.print(f"  Min Score: {score_stats.get('min_score', 0):.1%}")
             console.print(f"  Max Score: {score_stats.get('max_score', 0):.1%}")
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug(f"Score statistics unavailable: {e}")
 
 
 @app.command()
@@ -909,6 +922,7 @@ def health_check():
         console.print(f"    Model: {settings.ml.embedding_model}")
         console.print(f"    Device: {settings.ml.device}")
     except Exception as e:
+        logger.debug(f"Embedding model not yet loaded: {e}")
         console.print(f"  [yellow]○[/yellow] Embedding model not loaded (will load on first use)")
 
     # Bias detector
@@ -917,6 +931,7 @@ def health_check():
         detector = get_bias_detector()
         console.print("  [green]✓[/green] Bias detector ready")
     except Exception as e:
+        logger.debug(f"Bias detector not yet loaded: {e}")
         console.print(f"  [yellow]○[/yellow] Bias detector not loaded")
 
     # Explainer
@@ -925,6 +940,7 @@ def health_check():
         explainer = get_match_explainer()
         console.print("  [green]✓[/green] Explainer ready")
     except Exception as e:
+        logger.debug(f"Explainer not yet loaded: {e}")
         console.print(f"  [yellow]○[/yellow] Explainer not loaded")
 
     # Summary
@@ -1258,7 +1274,8 @@ def gdrive_import(
                         success_count += 1
                     else:
                         error_count += 1
-                except Exception:
+                except Exception as e:
+                    logger.warning(f"Failed to process downloaded file {resume_file}: {e}")
                     error_count += 1
 
                 progress.update(task, advance=1)

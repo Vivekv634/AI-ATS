@@ -5,7 +5,7 @@ Defines the schema for candidate-job matches, scoring results,
 and explainability components.
 """
 
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import Enum
 from typing import Any, Optional
 
@@ -182,7 +182,7 @@ class Explanation(EmbeddedModel):
 class BiasCheckResult(EmbeddedModel):
     """Results of bias detection check for this match."""
 
-    checked_at: datetime = Field(default_factory=datetime.utcnow)
+    checked_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     model_version: str = "1.0"
 
     # Bias flags
@@ -204,7 +204,7 @@ class RecruiterFeedback(EmbeddedModel):
     rating: Optional[int] = None  # 1-5 rating
     comments: Optional[str] = None
     decision: Optional[str] = None  # shortlist, reject, etc.
-    feedback_at: datetime = Field(default_factory=datetime.utcnow)
+    feedback_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 
 class Match(BaseDocument):
@@ -249,7 +249,7 @@ class Match(BaseDocument):
 
     # Processing Info
     scoring_model_version: str = "1.0"
-    scored_at: datetime = Field(default_factory=datetime.utcnow)
+    scored_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
     @field_validator("overall_score")
     @classmethod

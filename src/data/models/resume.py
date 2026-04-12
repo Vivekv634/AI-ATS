@@ -5,7 +5,7 @@ Defines the schema for resume documents, including file metadata,
 parsed content, and processing status.
 """
 
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import Enum
 from typing import Any, Optional
 
@@ -46,7 +46,7 @@ class FileMetadata(EmbeddedModel):
     file_hash: str  # SHA-256 hash for deduplication
     storage_path: str  # Relative path to file storage
     mime_type: Optional[str] = None
-    uploaded_at: datetime = Field(default_factory=datetime.utcnow)
+    uploaded_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
     @field_validator("file_size_bytes")
     @classmethod
@@ -99,7 +99,7 @@ class ProcessingError(EmbeddedModel):
     stage: str  # e.g., "parsing", "nlp", "embedding"
     error_type: str
     error_message: str
-    occurred_at: datetime = Field(default_factory=datetime.utcnow)
+    occurred_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     is_recoverable: bool = True
 
 
