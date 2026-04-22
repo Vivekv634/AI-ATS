@@ -1,18 +1,10 @@
-"""
-Dashboard view for AI-ATS application.
-
-Provides an overview of recruitment activities, statistics,
-and recent activity.
-"""
-
 from PyQt6.QtWidgets import (
     QWidget,
     QVBoxLayout,
     QHBoxLayout,
     QLabel,
-    QGridLayout,
 )
-from PyQt6.QtCore import Qt, QTimer, pyqtSignal
+from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QFont
 
 from src.utils.constants import COLORS
@@ -82,7 +74,7 @@ class DashboardView(BaseView):
             title="Active Jobs",
             value="--",
             subtitle="",
-            color=COLORS['primary'],
+            color=COLORS["primary"],
         )
         stats_layout.addWidget(self.jobs_card)
 
@@ -91,7 +83,7 @@ class DashboardView(BaseView):
             title="Total Candidates",
             value="--",
             subtitle="",
-            color=COLORS['success'],
+            color=COLORS["success"],
         )
         stats_layout.addWidget(self.candidates_card)
 
@@ -100,7 +92,7 @@ class DashboardView(BaseView):
             title="Matches Made",
             value="--",
             subtitle="",
-            color=COLORS['primary'],
+            color=COLORS["primary"],
         )
         stats_layout.addWidget(self.matches_card)
 
@@ -109,7 +101,7 @@ class DashboardView(BaseView):
             title="Interviews",
             value="--",
             subtitle="",
-            color=COLORS['warning'],
+            color=COLORS["warning"],
         )
         stats_layout.addWidget(self.interviews_card)
 
@@ -140,7 +132,8 @@ class DashboardView(BaseView):
         # Import resumes button -> navigate to Candidates (index 1)
         import_btn = PrimaryButton("Import Resumes")
         import_btn.setMinimumHeight(44)
-        import_btn.setStyleSheet(f"""
+        import_btn.setStyleSheet(
+            f"""
             QPushButton {{
                 background-color: {COLORS['success']};
                 color: white;
@@ -152,14 +145,16 @@ class DashboardView(BaseView):
             QPushButton:hover {{
                 background-color: {COLORS['success_dark']};
             }}
-        """)
+        """
+        )
         import_btn.clicked.connect(lambda: self.navigate_to_view.emit(1))
         actions_card.add_content(import_btn)
 
         # Run matching button -> navigate to Matching (index 3)
         match_btn = PrimaryButton("Run AI Matching")
         match_btn.setMinimumHeight(44)
-        match_btn.setStyleSheet(f"""
+        match_btn.setStyleSheet(
+            f"""
             QPushButton {{
                 background-color: {COLORS['accent']};
                 color: white;
@@ -171,7 +166,8 @@ class DashboardView(BaseView):
             QPushButton:hover {{
                 background-color: {COLORS['accent_dark']};
             }}
-        """)
+        """
+        )
         match_btn.clicked.connect(lambda: self.navigate_to_view.emit(3))
         actions_card.add_content(match_btn)
 
@@ -215,18 +211,22 @@ class DashboardView(BaseView):
         content.setSpacing(2)
 
         title_label = QLabel(title)
-        title_label.setStyleSheet(f"""
+        title_label.setStyleSheet(
+            f"""
             color: {COLORS['text_primary']};
             font-weight: 500;
             font-size: 13px;
-        """)
+        """
+        )
         content.addWidget(title_label)
 
         desc_label = QLabel(description)
-        desc_label.setStyleSheet(f"""
+        desc_label.setStyleSheet(
+            f"""
             color: {COLORS['text_secondary']};
             font-size: 12px;
-        """)
+        """
+        )
         content.addWidget(desc_label)
 
         layout.addLayout(content)
@@ -234,10 +234,12 @@ class DashboardView(BaseView):
 
         # Time
         time_label = QLabel(time)
-        time_label.setStyleSheet(f"""
+        time_label.setStyleSheet(
+            f"""
             color: {COLORS['text_secondary']};
             font-size: 11px;
-        """)
+        """
+        )
         layout.addWidget(time_label)
 
         return item
@@ -257,10 +259,12 @@ class DashboardView(BaseView):
         header_layout.addStretch()
 
         view_all = QLabel("View All →")
-        view_all.setStyleSheet(f"""
+        view_all.setStyleSheet(
+            f"""
             color: {COLORS['primary']};
             font-size: 12px;
-        """)
+        """
+        )
         view_all.setCursor(Qt.CursorShape.PointingHandCursor)
         header_layout.addWidget(view_all)
 
@@ -342,29 +346,37 @@ class DashboardView(BaseView):
 
         activities = []
         try:
-            from src.data.database import get_database_manager
-            from src.data.repositories import get_audit_repository
+            # Read from PostgreSQL audit_logs (authoritative since Phase 2).
+            from src.data.sql.engine import get_sql_manager
+            from src.data.sql.repositories.audit_record_repo import (
+                get_audit_record_repository,
+            )
+            from sqlalchemy import select
 
-            db_manager = get_database_manager()
-            if db_manager.check_sync_connection():
-                audit_repo = get_audit_repository()
-                logs = audit_repo.find(
-                    {}, limit=5, sort_by="created_at", sort_order=-1
-                )
+            sql_mgr = get_sql_manager()
+            if sql_mgr.check_sync_connection():
+                repo = get_audit_record_repository()
+                from src.data.sql.models.audit_record import AuditRecord
+
+                with sql_mgr.sync_session() as session:
+                    stmt = select(AuditRecord).order_by(AuditRecord.occurred_at.desc()).limit(5)
+                    logs = session.execute(stmt).scalars().all()
+                    for r in logs:
+                        session.expunge(r)
+
                 from datetime import datetime, timezone
+
                 for log in logs:
                     action = getattr(log, "action", "")
                     details = getattr(log, "action_description", "") or ""
-                    created = getattr(log, "created_at", None)
+                    occurred = getattr(log, "occurred_at", None)
 
-                    # Format relative time
                     time_str = ""
-                    if created:
+                    if occurred:
                         now = datetime.now(timezone.utc)
-                        # Ensure created is timezone-aware for comparison
-                        if created.tzinfo is None:
-                            created = created.replace(tzinfo=timezone.utc)
-                        delta = now - created
+                        if occurred.tzinfo is None:
+                            occurred = occurred.replace(tzinfo=timezone.utc)
+                        delta = now - occurred
                         if delta.days > 0:
                             time_str = f"{delta.days}d ago"
                         elif delta.seconds > 3600:
@@ -374,11 +386,13 @@ class DashboardView(BaseView):
                         else:
                             time_str = "Just now"
 
-                    activities.append((
-                        str(action).replace("_", " ").title(),
-                        str(details)[:60],
-                        time_str,
-                    ))
+                    activities.append(
+                        (
+                            str(action).replace("_", " ").title(),
+                            str(details)[:60],
+                            time_str,
+                        )
+                    )
         except Exception as e:
             logger.debug(f"Error loading recent activity: {e}")
 
@@ -409,9 +423,7 @@ class DashboardView(BaseView):
                 match_repo = get_match_repository()
                 candidate_repo = get_candidate_repository()
 
-                top_matches = match_repo.find(
-                    {}, limit=4, sort_by="overall_score", sort_order=-1
-                )
+                top_matches = match_repo.find({}, limit=4, sort_by="overall_score", sort_order=-1)
 
                 found = False
                 for match in top_matches:
@@ -441,9 +453,7 @@ class DashboardView(BaseView):
 
                 if not found:
                     placeholder = QLabel("No match results yet. Run AI Matching first.")
-                    placeholder.setStyleSheet(
-                        f"color: {COLORS['text_secondary']}; padding: 16px;"
-                    )
+                    placeholder.setStyleSheet(f"color: {COLORS['text_secondary']}; padding: 16px;")
                     self.top_candidates_layout.addWidget(placeholder)
                 return
         except Exception as e:

@@ -1,9 +1,3 @@
-"""
-Configuration management for AI-ATS application.
-
-Uses Pydantic Settings for type-safe configuration with environment variable support.
-"""
-
 from pathlib import Path
 from typing import Literal
 
@@ -54,6 +48,7 @@ class DatabaseSettings(BaseSettings):
     def connection_string(self) -> str:
         """Generate MongoDB connection string."""
         from urllib.parse import quote_plus
+
         if self.username and self.password:
             # URL-encode credentials for safety
             return f"mongodb://{quote_plus(self.username)}:{quote_plus(self.password)}@{self.host}:{self.port}"
@@ -62,6 +57,72 @@ class DatabaseSettings(BaseSettings):
     def __repr__(self) -> str:
         """Safe repr that doesn't expose password."""
         return f"DatabaseSettings(host={self.host!r}, port={self.port}, name={self.name!r}, username={self.username!r}, password='***')"
+
+
+class PostgresSettings(BaseSettings):
+    """PostgreSQL relational-store configuration.
+
+    Path A of the dual-store architecture: Postgres owns workspaces, jobs
+    metadata, matches, and audit logs. MongoDB owns candidate/resume docs.
+    """
+
+    model_config = SettingsConfigDict(env_prefix="POSTGRES_")
+
+    host: str = "localhost"
+    port: int = 5432
+    name: str = "ai_ats"
+    username: str | None = None
+    password: str | None = None
+    pool_size: int = 10
+    max_overflow: int = 20
+
+    @field_validator("host")
+    @classmethod
+    def validate_host(cls, v: str) -> str:
+        v = v.strip()
+        if not v or any(c in v for c in [";", "&", "|", "$", "`", "\n", "\r"]):
+            raise ValueError("Invalid characters in postgres host")
+        return v
+
+    @field_validator("name")
+    @classmethod
+    def validate_name(cls, v: str) -> str:
+        v = v.strip()
+        if not v or any(c in v for c in ["/", "\\", '"', "$", "\0", " "]):
+            raise ValueError("Invalid postgres database name")
+        return v
+
+    @property
+    def sync_uri(self) -> str:
+        """psycopg3 driver URI used by alembic and sync sessions."""
+        from urllib.parse import quote_plus
+
+        auth = ""
+        if self.username:
+            if self.password:
+                auth = f"{quote_plus(self.username)}:{quote_plus(self.password)}@"
+            else:
+                auth = f"{quote_plus(self.username)}@"
+        return f"postgresql+psycopg://{auth}{self.host}:{self.port}/{self.name}"
+
+    @property
+    def async_uri(self) -> str:
+        """asyncpg driver URI used by async sessions at runtime."""
+        from urllib.parse import quote_plus
+
+        auth = ""
+        if self.username:
+            if self.password:
+                auth = f"{quote_plus(self.username)}:{quote_plus(self.password)}@"
+            else:
+                auth = f"{quote_plus(self.username)}@"
+        return f"postgresql+asyncpg://{auth}{self.host}:{self.port}/{self.name}"
+
+    def __repr__(self) -> str:
+        return (
+            f"PostgresSettings(host={self.host!r}, port={self.port}, "
+            f"name={self.name!r}, username={self.username!r}, password='***')"
+        )
 
 
 class VectorStoreSettings(BaseSettings):
@@ -95,9 +156,6 @@ class MLSettings(BaseSettings):
     # Model paths
     models_directory: Path = DATA_DIR / "models"
 
-    # Minimum overall_confidence for a ResumeParseResult to be considered
-    # successful.  0.3 was the original value; 0.5 requires at least contact
-    # info + skills or experience to be extracted before a parse is accepted.
     resume_success_threshold: float = 0.3
 
     @field_validator("device")
@@ -164,6 +222,7 @@ class AppSettings(BaseSettings):
 
     # Nested settings
     database: DatabaseSettings = Field(default_factory=DatabaseSettings)
+    postgres: PostgresSettings = Field(default_factory=PostgresSettings)
     vector_store: VectorStoreSettings = Field(default_factory=VectorStoreSettings)
     ml: MLSettings = Field(default_factory=MLSettings)
     ui: UISettings = Field(default_factory=UISettings)
@@ -190,23 +249,7 @@ def reload_settings() -> AppSettings:
 
 
 def write_env_settings(updates: dict[str, str], env_file: Path | None = None) -> None:
-    """
-    Persist key=value pairs to the .env file without destroying comments.
-
-    Algorithm:
-      1. Read every existing line.
-      2. For each line that matches ``KEY=...``, replace the value if KEY
-         appears in *updates*.  Track which keys were handled.
-      3. Append any keys from *updates* that were not already present.
-      4. Write the result back atomically via a temp file + rename so a
-         crash mid-write never leaves a truncated .env.
-
-    Args:
-        updates: Mapping of env-var name → new string value.
-        env_file: Path to .env file; defaults to the project root .env.
-    """
     import re
-    import tempfile
 
     target: Path = env_file or (ROOT_DIR / ".env")
 
@@ -221,7 +264,7 @@ def write_env_settings(updates: dict[str, str], env_file: Path | None = None) ->
 
     for line in lines:
         # Match uncommented KEY=value lines
-        m = re.match(r'^([A-Z][A-Z0-9_]*)=', line)
+        m = re.match(r"^([A-Z][A-Z0-9_]*)=", line)
         if m:
             key = m.group(1)
             if key in remaining:

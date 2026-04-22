@@ -1,10 +1,3 @@
-"""
-AI-ATS Command Line Interface
-
-Provides CLI commands for managing the AI-ATS application,
-including database operations, model training, and utilities.
-"""
-
 import sys
 from pathlib import Path
 from typing import Optional
@@ -815,39 +808,41 @@ def audit_logs(
         False, "--compliance", help="Show only compliance-relevant logs"
     ),
 ):
-    """View audit logs for compliance and debugging."""
-    from src.data.database import get_database_manager
-    from src.data.repositories import get_audit_repository
+    """View audit logs for compliance and debugging.
 
-    db_manager = get_database_manager()
-    if not db_manager.check_sync_connection():
-        console.print("[red]Error: Could not connect to MongoDB.[/red]")
+    Reads from PostgreSQL audit_logs (authoritative since Phase 2).
+    """
+    import uuid
+    from sqlalchemy import select
+
+    from src.data.sql.engine import get_sql_manager
+    from src.data.sql.models.audit_record import AuditRecord
+
+    sql_mgr = get_sql_manager()
+    if not sql_mgr.check_sync_connection():
+        console.print("[red]Error: Could not connect to PostgreSQL.[/red]")
         raise typer.Exit(1)
 
-    audit_repo = get_audit_repository()
+    with sql_mgr.sync_session() as session:
+        stmt = select(AuditRecord)
+        if action:
+            stmt = stmt.where(AuditRecord.action == action)
+        if candidate_id:
+            stmt = stmt.where(AuditRecord.related_candidate_mongo_id == candidate_id)
+        if job_id:
+            try:
+                job_uuid = uuid.UUID(job_id)
+            except ValueError:
+                console.print(f"[red]Error: Invalid job UUID: {job_id}[/red]")
+                raise typer.Exit(1)
+            stmt = stmt.where(AuditRecord.related_job_id == job_uuid)
+        if compliance_only:
+            stmt = stmt.where(AuditRecord.compliance_relevant.is_(True))
+        stmt = stmt.order_by(AuditRecord.occurred_at.desc()).limit(limit)
 
-    # Build query
-    query = {}
-    if action:
-        query["action"] = action
-    if candidate_id:
-        from bson import ObjectId
-
-        if not ObjectId.is_valid(candidate_id):
-            console.print(f"[red]Error: Invalid candidate ID format: {candidate_id}[/red]")
-            raise typer.Exit(1)
-        query["related_candidate_id"] = ObjectId(candidate_id)
-    if job_id:
-        from bson import ObjectId
-
-        if not ObjectId.is_valid(job_id):
-            console.print(f"[red]Error: Invalid job ID format: {job_id}[/red]")
-            raise typer.Exit(1)
-        query["related_job_id"] = ObjectId(job_id)
-    if compliance_only:
-        query["compliance_relevant"] = True
-
-    logs = audit_repo.find(query, limit=limit, sort_by="created_at", sort_order=-1)
+        logs = session.execute(stmt).scalars().all()
+        for log in logs:
+            session.expunge(log)
 
     if not logs:
         console.print("[yellow]No audit logs found.[/yellow]")
@@ -861,13 +856,16 @@ def audit_logs(
     table.add_column("Compliance", justify="center")
 
     for log in logs:
-        timestamp = log.created_at.strftime("%Y-%m-%d %H:%M:%S") if log.created_at else "N/A"
-        resource = (
-            f"{log.resource.resource_type}:{log.resource.resource_id[:8]}..."
-            if log.resource
-            else "N/A"
-        )
-        actor = log.actor.actor_id if log.actor else "system"
+        timestamp = log.occurred_at.strftime("%Y-%m-%d %H:%M:%S") if log.occurred_at else "N/A"
+        resource_data = log.resource or {}
+        if resource_data:
+            rtype = resource_data.get("resource_type", "?")
+            rid = str(resource_data.get("resource_id", ""))[:8]
+            resource = f"{rtype}:{rid}..." if rid else rtype
+        else:
+            resource = "N/A"
+        actor_data = log.actor or {}
+        actor = actor_data.get("actor_id") or actor_data.get("actor_name") or "system"
         compliance = "✓" if log.compliance_relevant else ""
 
         table.add_row(timestamp, log.action, resource, actor, compliance)
@@ -877,19 +875,25 @@ def audit_logs(
 
 @app.command()
 def stats():
-    """Show database and system statistics."""
+    """Show database and system statistics across Mongo + Postgres."""
+    from sqlalchemy import func, select
+
     from src.data.database import get_database_manager
     from src.data.repositories import (
-        get_job_repository,
         get_candidate_repository,
+        get_job_repository,
         get_match_repository,
-        get_audit_repository,
     )
+    from src.data.sql.engine import get_sql_manager
+    from src.data.sql.models import AuditRecord, JobRecord, MatchRecord, Workspace
 
     db_manager = get_database_manager()
     if not db_manager.check_sync_connection():
         console.print("[red]Error: Could not connect to MongoDB.[/red]")
         raise typer.Exit(1)
+
+    sql_mgr = get_sql_manager()
+    postgres_ok: bool = sql_mgr.check_sync_connection()
 
     console.print("[bold cyan]System Statistics[/bold cyan]")
     console.print(f"[dim]{'─' * 50}[/dim]")
@@ -897,22 +901,46 @@ def stats():
     job_repo = get_job_repository()
     candidate_repo = get_candidate_repository()
     match_repo = get_match_repository()
-    audit_repo = get_audit_repository()
 
-    # Count documents
-    job_count = job_repo.count({})
+    mongo_job_count = job_repo.count({})
     candidate_count = candidate_repo.count({})
-    match_count = match_repo.count({})
-    audit_count = audit_repo.count({})
+    mongo_match_count = match_repo.count({})
+
+    # Postgres counts (Phase 2 authoritative).
+    pg_workspace_count: int = 0
+    pg_job_count: int = 0
+    pg_match_count: int = 0
+    pg_audit_count: int = 0
+    if postgres_ok:
+        with sql_mgr.sync_session() as session:
+            pg_workspace_count = int(
+                session.execute(select(func.count()).select_from(Workspace)).scalar_one()
+            )
+            pg_job_count = int(
+                session.execute(select(func.count()).select_from(JobRecord)).scalar_one()
+            )
+            pg_match_count = int(
+                session.execute(select(func.count()).select_from(MatchRecord)).scalar_one()
+            )
+            pg_audit_count = int(
+                session.execute(select(func.count()).select_from(AuditRecord)).scalar_one()
+            )
 
     table = Table(title="Database Counts")
-    table.add_column("Collection", style="cyan")
+    table.add_column("Collection / Table", style="cyan")
+    table.add_column("Store", style="dim")
     table.add_column("Count", justify="right", style="green")
 
-    table.add_row("Jobs", str(job_count))
-    table.add_row("Candidates", str(candidate_count))
-    table.add_row("Matches", str(match_count))
-    table.add_row("Audit Logs", str(audit_count))
+    table.add_row("Candidates", "mongo", str(candidate_count))
+    table.add_row("Jobs", "mongo", str(mongo_job_count))
+    table.add_row("Matches (legacy)", "mongo", str(mongo_match_count))
+    if postgres_ok:
+        table.add_row("Workspaces", "postgres", str(pg_workspace_count))
+        table.add_row("Jobs (relational)", "postgres", str(pg_job_count))
+        table.add_row("Matches", "postgres", str(pg_match_count))
+        table.add_row("Audit Logs", "postgres", str(pg_audit_count))
+    else:
+        table.add_row("Postgres tables", "postgres", "[dim](unavailable)[/dim]")
 
     console.print(table)
 

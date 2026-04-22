@@ -1,11 +1,7 @@
-"""
-Dialog windows for AI-ATS application.
-
-Provides reusable dialog components for various user interactions.
-"""
-
 from src.ui.dialogs.import_center import ImportCenterDialog
+from src.ui.dialogs.override_score_dialog import OverrideScoreDialog
 
 __all__ = [
     "ImportCenterDialog",
+    "OverrideScoreDialog",
 ]

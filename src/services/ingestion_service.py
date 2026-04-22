@@ -1,10 +1,3 @@
-"""
-IngestionService — orchestrates the full resume ingestion pipeline.
-
-Flow:
-  validate → deduplicate (hash) → parse → map → upsert to DB → return result
-"""
-
 import os
 import tempfile
 import time
@@ -19,27 +12,21 @@ from src.utils.logger import get_logger
 logger = get_logger(__name__)
 
 
-# ---------------------------------------------------------------------------
 # Result type
-# ---------------------------------------------------------------------------
-
 @dataclass
 class IngestionResult:
-    status: str = "error"                   # "success" | "duplicate" | "error"
+    status: str = "error"  # "success" | "duplicate" | "error"
     candidate_id: Optional[str] = None
     candidate_name: str = ""
     candidate_email: str = ""
     file_hash: str = ""
-    embedding_id: Optional[str] = None      # set after successful embedding
+    embedding_id: Optional[str] = None  # set after successful embedding
     processing_time_ms: int = 0
     error_message: str = ""
     warnings: list[str] = field(default_factory=list)
 
 
-# ---------------------------------------------------------------------------
 # Repository protocol — lets tests inject a fake without importing pymongo
-# ---------------------------------------------------------------------------
-
 @runtime_checkable
 class CandidateRepoProtocol(Protocol):
     def hash_exists(self, file_hash: str) -> bool: ...
@@ -51,10 +38,7 @@ class CandidateRepoProtocol(Protocol):
     ) -> object: ...
 
 
-# ---------------------------------------------------------------------------
 # Service
-# ---------------------------------------------------------------------------
-
 class IngestionService:
     """
     Orchestrates resume ingestion end-to-end.
@@ -71,12 +55,10 @@ class IngestionService:
     def _get_default_repo() -> CandidateRepoProtocol:
         """Import the real repo lazily so tests can bypass DB entirely."""
         from src.data.repositories.candidate_repository import CandidateRepository
+
         return CandidateRepository()
 
-    # ------------------------------------------------------------------
     # Public API
-    # ------------------------------------------------------------------
-
     def ingest_file(self, path: Path | str) -> IngestionResult:
         """Ingest a resume from a filesystem path."""
         path = Path(path)
@@ -96,10 +78,7 @@ class IngestionService:
         """Ingest a resume from raw bytes (e.g. downloaded from Google Drive)."""
         return self._ingest(content, filename)
 
-    # ------------------------------------------------------------------
     # Internal pipeline
-    # ------------------------------------------------------------------
-
     def _ingest(self, content: bytes, filename: str) -> IngestionResult:
         t0: float = time.monotonic()
         result: IngestionResult = IngestionResult()
@@ -119,9 +98,7 @@ class IngestionService:
             if self._repo.hash_exists(validation.file_hash):
                 result.status = "duplicate"
                 result.processing_time_ms = int((time.monotonic() - t0) * 1000)
-                logger.info(
-                    f"Duplicate file skipped: {filename} ({validation.file_hash[:8]}…)"
-                )
+                logger.info(f"Duplicate file skipped: {filename} ({validation.file_hash[:8]}…)")
                 return result
         except Exception as exc:
             logger.warning(f"Hash dedup check failed (continuing): {exc}")
@@ -158,14 +135,26 @@ class IngestionService:
             result.status = "error"
             result.error_message = f"Storage error: {exc}"
 
+        # 4b. Audit — fail-soft; never blocks ingestion
+        if result.status == "success" and result.candidate_id:
+            try:
+                from src.services.audit_service import get_audit_service
+
+                get_audit_service().emit_candidate_added(
+                    candidate_mongo_id=result.candidate_id,
+                    candidate_name=result.candidate_name or "Unknown",
+                    source=filename,
+                )
+            except Exception as exc:
+                logger.warning(f"Audit emit (candidate_added) failed: {exc}")
+
         # 5. Embed (non-fatal — embedding failure never blocks ingestion)
         if result.status == "success" and result.candidate_id:
             try:
                 from src.ml.embeddings.embedding_service import EmbeddingService
+
                 emb_svc: EmbeddingService = EmbeddingService(repo=self._repo)
-                result.embedding_id = emb_svc.embed_candidate(
-                    result.candidate_id, parsed
-                )
+                result.embedding_id = emb_svc.embed_candidate(result.candidate_id, parsed)
             except Exception as exc:
                 logger.warning(f"Embedding step failed (non-fatal) for {filename}: {exc}")
                 result.warnings.append(f"Embedding unavailable: {exc}")
