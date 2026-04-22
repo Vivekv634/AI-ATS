@@ -16,7 +16,7 @@ RESOURCES_DIR = ROOT_DIR / "resources"
 class DatabaseSettings(BaseSettings):
     """MongoDB database configuration."""
 
-    model_config = SettingsConfigDict(env_prefix="DB_")
+    model_config = SettingsConfigDict(env_prefix="DB_", env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
     host: str = "localhost"
     port: int = 27017
@@ -66,7 +66,7 @@ class PostgresSettings(BaseSettings):
     metadata, matches, and audit logs. MongoDB owns candidate/resume docs.
     """
 
-    model_config = SettingsConfigDict(env_prefix="POSTGRES_")
+    model_config = SettingsConfigDict(env_prefix="POSTGRES_", env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
     host: str = "localhost"
     port: int = 5432

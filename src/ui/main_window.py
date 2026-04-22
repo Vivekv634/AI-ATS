@@ -12,6 +12,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 from PyQt6.QtWidgets import (
     QApplication,
+    QDialog,
     QMainWindow,
     QWidget,
     QVBoxLayout,
@@ -283,8 +284,7 @@ class ContentHeader(QFrame):
     """
     Thin header bar above the content area.
 
-    Shows the current view name and a subtle separator.
-    Used as a breadcrumb/context anchor.
+    Shows the current view name, workspace switcher pill, and app tag.
     """
 
     def __init__(self, parent=None) -> None:
@@ -307,6 +307,31 @@ class ContentHeader(QFrame):
         layout.addWidget(self._title)
         layout.addStretch()
 
+        # Workspace switcher pill
+        self._workspace_pill = QPushButton("No Workspace  ▾")
+        self._workspace_pill.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._workspace_pill.setStyleSheet(
+            f"""
+            QPushButton {{
+                background-color: {COLORS['surface_elevated']};
+                color: {COLORS['text_secondary']};
+                border: 1px solid {COLORS['border_muted']};
+                border-radius: 12px;
+                padding: 3px 12px;
+                font-size: 11px;
+            }}
+            QPushButton:hover {{
+                background-color: {COLORS['surface_overlay']};
+                color: {COLORS['text_primary']};
+                border-color: {COLORS['primary']};
+            }}
+            """
+        )
+        self._workspace_pill.clicked.connect(self._open_workspace_selector)
+        layout.addWidget(self._workspace_pill)
+
+        layout.addSpacing(12)
+
         # Subtle app name tag on the right
         tag = QLabel(APP_DISPLAY_NAME)
         tag.setStyleSheet(f"color: {COLORS['text_tertiary']}; font-size: 11px;")
@@ -314,6 +339,23 @@ class ContentHeader(QFrame):
 
     def set_title(self, title: str) -> None:
         self._title.setText(title)
+
+    def update_workspace(self, workspace: object) -> None:
+        """Refresh the pill label when the active workspace changes."""
+        if workspace is None:
+            self._workspace_pill.setText("No Workspace  ▾")
+        else:
+            name: str = getattr(workspace, "name", "Workspace")
+            # Truncate long names gracefully
+            display = name if len(name) <= 28 else name[:26] + "…"
+            self._workspace_pill.setText(f"⊡ {display}  ▾")
+
+    def _open_workspace_selector(self) -> None:
+        from src.ui.dialogs.workspace_dialogs import WorkspaceSelectorDialog
+        from src.utils.workspace_state import get_workspace_state
+        dlg = WorkspaceSelectorDialog(parent=self)
+        if dlg.exec() == QDialog.DialogCode.Accepted and dlg.selected_workspace:
+            get_workspace_state().set_workspace(dlg.selected_workspace)
 
 
 # ── Placeholder view ───────────────────────────────────────────────────────────
@@ -589,6 +631,12 @@ class MainWindow(QMainWindow):
         self.dashboard_view.navigate_to_view.connect(self.switch_view)
         self.jobs_view.job_created.connect(lambda: self.mark_view_dirty(3))
 
+        # ── Workspace state ────────────────────────────────────────────────────
+        from src.utils.workspace_state import get_workspace_state
+        self._ws_state = get_workspace_state()
+        self._ws_state.workspace_changed.connect(self.header.update_workspace)
+        self._bootstrap_workspace()
+
         # ── Load dashboard ─────────────────────────────────────────────────────
         self.dashboard_view.refresh()
 
@@ -612,6 +660,16 @@ class MainWindow(QMainWindow):
     def mark_view_dirty(self, index: int) -> None:
         """Mark a view as needing refresh on next visit."""
         self._view_needs_refresh[index] = True
+
+    def _bootstrap_workspace(self) -> None:
+        """Load the most-recently-used workspace from Postgres on startup."""
+        try:
+            from src.data.sql.repositories import get_workspace_repository
+            workspaces = get_workspace_repository().list_recent(limit=1)
+            if workspaces:
+                self._ws_state.set_workspace(workspaces[0])
+        except Exception:
+            pass
 
 
 # ── Entry point ────────────────────────────────────────────────────────────────

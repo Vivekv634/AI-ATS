@@ -8,11 +8,11 @@ from src.utils.config import PostgresSettings
 
 class TestPostgresSettingsURI:
     def test_sync_uri_uses_psycopg_driver(self) -> None:
-        s = PostgresSettings(host="db.example.com", port=5433, name="ats")
+        s = PostgresSettings(host="db.example.com", port=5433, name="ats", username=None, password=None)
         assert s.sync_uri == "postgresql+psycopg://db.example.com:5433/ats"
 
     def test_async_uri_uses_asyncpg_driver(self) -> None:
-        s = PostgresSettings(host="db.example.com", port=5433, name="ats")
+        s = PostgresSettings(host="db.example.com", port=5433, name="ats", username=None, password=None)
         assert s.async_uri == "postgresql+asyncpg://db.example.com:5433/ats"
 
     def test_uri_includes_credentials_when_provided(self) -> None:

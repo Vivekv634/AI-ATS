@@ -5,6 +5,7 @@ Provides interface for configuring application settings.
 """
 
 from PyQt6.QtWidgets import (
+    QFileDialog,
     QWidget,
     QVBoxLayout,
     QHBoxLayout,
@@ -30,6 +31,7 @@ from src.ui.widgets import (
     PrimaryButton,
     SecondaryButton,
 )
+from src.ui.widgets.buttons import DangerButton
 
 
 class SettingsView(BaseView):
@@ -97,6 +99,10 @@ class SettingsView(BaseView):
         # Database settings tab
         db_tab = self._create_database_tab()
         tabs.addTab(db_tab, "Database")
+
+        # Data management tab
+        data_tab = self._create_data_management_tab()
+        tabs.addTab(data_tab, "Data Management")
 
         self.add_widget(tabs)
 
@@ -372,6 +378,342 @@ class SettingsView(BaseView):
 
         layout.addStretch()
         return tab
+
+    def _create_data_management_tab(self) -> QWidget:
+        """Export, import, and purge controls for the active workspace."""
+        tab = QWidget()
+        layout = QVBoxLayout(tab)
+        layout.setSpacing(16)
+
+        # ── Active workspace info ──────────────────────────────────────────────
+        ws_group = QGroupBox("Active Workspace")
+        ws_group.setStyleSheet(self._group_style())
+        ws_layout = QVBoxLayout(ws_group)
+        ws_layout.setSpacing(10)
+
+        self._ws_info_label = QLabel("No workspace selected")
+        self._ws_info_label.setStyleSheet(
+            f"color: {COLORS['text_secondary']}; font-size: 12px;"
+        )
+        ws_layout.addWidget(self._ws_info_label)
+
+        ws_btn_row = QHBoxLayout()
+        switch_btn = SecondaryButton("Switch Workspace…")
+        switch_btn.clicked.connect(self._open_workspace_selector)
+        ws_btn_row.addWidget(switch_btn)
+
+        self._archive_ws_btn = SecondaryButton("Archive Workspace")
+        self._archive_ws_btn.setEnabled(False)
+        self._archive_ws_btn.clicked.connect(self._on_archive_workspace)
+        ws_btn_row.addWidget(self._archive_ws_btn)
+
+        ws_btn_row.addStretch()
+        ws_layout.addLayout(ws_btn_row)
+        layout.addWidget(ws_group)
+
+        # Connect workspace state signal so label stays current
+        try:
+            from src.utils.workspace_state import get_workspace_state
+            self._ws_state = get_workspace_state()
+            self._ws_state.workspace_changed.connect(self._on_workspace_changed)
+            self._on_workspace_changed(self._ws_state.workspace)
+        except Exception:
+            pass
+
+        # ── Export ────────────────────────────────────────────────────────────
+        export_group = QGroupBox("Export")
+        export_group.setStyleSheet(self._group_style())
+        export_layout = QVBoxLayout(export_group)
+        export_layout.setSpacing(10)
+
+        export_desc = QLabel(
+            "Export the active workspace to a portable file. "
+            "ZIP bundles all data as JSON; SQLite gives you a single query-able file."
+        )
+        export_desc.setWordWrap(True)
+        export_desc.setStyleSheet(
+            f"color: {COLORS['text_secondary']}; font-size: 11px;"
+        )
+        export_layout.addWidget(export_desc)
+
+        export_btn_row = QHBoxLayout()
+        zip_btn = PrimaryButton("Export to ZIP")
+        zip_btn.clicked.connect(lambda: self._export("zip"))
+        export_btn_row.addWidget(zip_btn)
+
+        sqlite_btn = SecondaryButton("Export to SQLite")
+        sqlite_btn.clicked.connect(lambda: self._export("sqlite"))
+        export_btn_row.addWidget(sqlite_btn)
+
+        jsonl_btn = SecondaryButton("Export Training Data (JSONL)")
+        jsonl_btn.clicked.connect(lambda: self._export("jsonl"))
+        export_btn_row.addWidget(jsonl_btn)
+
+        export_btn_row.addStretch()
+        export_layout.addLayout(export_btn_row)
+        layout.addWidget(export_group)
+
+        # ── Import ────────────────────────────────────────────────────────────
+        import_group = QGroupBox("Import")
+        import_group.setStyleSheet(self._group_style())
+        import_layout = QVBoxLayout(import_group)
+        import_layout.setSpacing(10)
+
+        import_desc = QLabel(
+            "Import a previously exported workspace. A new workspace is created "
+            "with fresh IDs — your existing data is never overwritten."
+        )
+        import_desc.setWordWrap(True)
+        import_desc.setStyleSheet(
+            f"color: {COLORS['text_secondary']}; font-size: 11px;"
+        )
+        import_layout.addWidget(import_desc)
+
+        import_btn_row = QHBoxLayout()
+        import_zip_btn = PrimaryButton("Import from ZIP")
+        import_zip_btn.clicked.connect(lambda: self._import("zip"))
+        import_btn_row.addWidget(import_zip_btn)
+
+        import_sqlite_btn = SecondaryButton("Import from SQLite")
+        import_sqlite_btn.clicked.connect(lambda: self._import("sqlite"))
+        import_btn_row.addWidget(import_sqlite_btn)
+
+        import_btn_row.addStretch()
+        import_layout.addLayout(import_btn_row)
+        layout.addWidget(import_group)
+
+        # ── Danger zone ───────────────────────────────────────────────────────
+        danger_group = QGroupBox("Danger Zone")
+        danger_group.setStyleSheet(
+            self._group_style().replace(
+                f"border: 1px solid {COLORS['border_subtle']}",
+                f"border: 1px solid {COLORS['error']}",
+            )
+        )
+        danger_layout = QVBoxLayout(danger_group)
+        danger_layout.setSpacing(10)
+
+        danger_desc = QLabel(
+            "Purge permanently deletes all workspace data (jobs + match scores). "
+            "An automatic ZIP backup is created first. "
+            "The workspace must be archived before it can be purged."
+        )
+        danger_desc.setWordWrap(True)
+        danger_desc.setStyleSheet(
+            f"color: {COLORS['text_secondary']}; font-size: 11px;"
+        )
+        danger_layout.addWidget(danger_desc)
+
+        self._purge_btn = DangerButton("Purge Workspace…")
+        self._purge_btn.setEnabled(False)
+        self._purge_btn.setFixedWidth(200)
+        self._purge_btn.clicked.connect(self._on_purge_workspace)
+        danger_layout.addWidget(self._purge_btn)
+
+        layout.addWidget(danger_group)
+        layout.addStretch()
+        return tab
+
+    # ── Data management event handlers ─────────────────────────────────────────
+
+    def _on_workspace_changed(self, workspace: object) -> None:
+        """Update workspace info label and button states when active WS changes."""
+        if workspace is None:
+            self._ws_info_label.setText("No workspace selected")
+            self._archive_ws_btn.setEnabled(False)
+            self._purge_btn.setEnabled(False)
+            return
+
+        from src.data.sql.models.workspace import WorkspaceStatus
+        name: str = getattr(workspace, "name", "")
+        status_val: str = getattr(workspace, "status", WorkspaceStatus.ACTIVE).value
+        self._ws_info_label.setText(
+            f"Name: {name}   Status: {status_val}"
+        )
+        is_active = getattr(workspace, "status", None) == WorkspaceStatus.ACTIVE
+        is_archived = getattr(workspace, "status", None) == WorkspaceStatus.ARCHIVED
+        self._archive_ws_btn.setEnabled(is_active)
+        self._purge_btn.setEnabled(is_archived)
+
+    def _open_workspace_selector(self) -> None:
+        from PyQt6.QtWidgets import QDialog
+        from src.ui.dialogs.workspace_dialogs import WorkspaceSelectorDialog
+        from src.utils.workspace_state import get_workspace_state
+        dlg = WorkspaceSelectorDialog(parent=self)
+        if dlg.exec() == QDialog.DialogCode.Accepted and dlg.selected_workspace:
+            get_workspace_state().set_workspace(dlg.selected_workspace)
+
+    def _on_archive_workspace(self) -> None:
+        try:
+            from src.utils.workspace_state import get_workspace_state
+            ws = get_workspace_state().workspace
+            if ws is None:
+                return
+            reply = QMessageBox.question(
+                self,
+                "Archive Workspace",
+                f'Archive "{ws.name}"?\n\nArchived workspaces are read-only.',  # type: ignore[attr-defined]
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            )
+            if reply != QMessageBox.StandardButton.Yes:
+                return
+            from src.data.sql.repositories import get_workspace_repository
+            updated = get_workspace_repository().archive(ws.id)  # type: ignore[attr-defined]
+            if updated:
+                get_workspace_state().set_workspace(updated)
+        except Exception as exc:
+            QMessageBox.critical(self, "Error", f"Could not archive workspace:\n{exc}")
+
+    def _export(self, fmt: str) -> None:
+        try:
+            from src.utils.workspace_state import get_workspace_state
+            ws = get_workspace_state().workspace
+            if ws is None:
+                QMessageBox.warning(
+                    self, "No Workspace", "Please select a workspace first."
+                )
+                return
+
+            from pathlib import Path
+            import datetime as _dt
+            ts = _dt.datetime.now().strftime("%Y%m%d_%H%M%S")
+            safe_name = "".join(
+                c if c.isalnum() or c in "-_" else "_"
+                for c in getattr(ws, "name", "workspace")
+            )
+
+            if fmt == "zip":
+                path, _ = QFileDialog.getSaveFileName(
+                    self,
+                    "Export Workspace to ZIP",
+                    f"workspace_{safe_name}_{ts}.zip",
+                    "ZIP Archives (*.zip)",
+                )
+                if not path:
+                    return
+                from src.services.export_service import get_export_service
+                get_export_service().export_to_zip(ws.id, Path(path))  # type: ignore[attr-defined]
+
+            elif fmt == "sqlite":
+                path, _ = QFileDialog.getSaveFileName(
+                    self,
+                    "Export Workspace to SQLite",
+                    f"workspace_{safe_name}_{ts}.db",
+                    "SQLite Databases (*.db *.sqlite)",
+                )
+                if not path:
+                    return
+                from src.services.export_service import get_export_service
+                get_export_service().export_to_sqlite(ws.id, Path(path))  # type: ignore[attr-defined]
+
+            elif fmt == "jsonl":
+                path, _ = QFileDialog.getSaveFileName(
+                    self,
+                    "Export Training Data",
+                    f"training_{safe_name}_{ts}.jsonl",
+                    "JSON Lines (*.jsonl)",
+                )
+                if not path:
+                    return
+                from src.services.export_service import get_export_service
+                result = get_export_service().export_training_jsonl(ws.id, Path(path))  # type: ignore[attr-defined]
+                QMessageBox.information(
+                    self, "Export Complete", f"Training data exported to:\n{result}"
+                )
+                return
+
+            QMessageBox.information(
+                self, "Export Complete", f"Workspace exported to:\n{path}"
+            )
+        except Exception as exc:
+            QMessageBox.critical(self, "Export Failed", f"Export error:\n{exc}")
+
+    def _import(self, fmt: str) -> None:
+        try:
+            if fmt == "zip":
+                path, _ = QFileDialog.getOpenFileName(
+                    self,
+                    "Import Workspace from ZIP",
+                    "",
+                    "ZIP Archives (*.zip)",
+                )
+            else:
+                path, _ = QFileDialog.getOpenFileName(
+                    self,
+                    "Import Workspace from SQLite",
+                    "",
+                    "SQLite Databases (*.db *.sqlite)",
+                )
+            if not path:
+                return
+
+            from pathlib import Path
+            from src.services.import_service import get_import_service
+            svc = get_import_service()
+            if fmt == "zip":
+                ws = svc.import_from_zip(Path(path))
+            else:
+                ws = svc.import_from_sqlite(Path(path))
+
+            from src.utils.workspace_state import get_workspace_state
+            get_workspace_state().set_workspace(ws)
+
+            QMessageBox.information(
+                self,
+                "Import Complete",
+                f'Workspace "{ws.name}" imported successfully.\n'  # type: ignore[attr-defined]
+                "It is now your active workspace.",
+            )
+        except Exception as exc:
+            QMessageBox.critical(self, "Import Failed", f"Import error:\n{exc}")
+
+    def _on_purge_workspace(self) -> None:
+        try:
+            from src.utils.workspace_state import get_workspace_state
+            ws = get_workspace_state().workspace
+            if ws is None:
+                return
+
+            # Step 1: auto-export backup
+            import datetime as _dt
+            from pathlib import Path
+            ts = _dt.datetime.now().strftime("%Y%m%d_%H%M%S")
+            safe_name = "".join(
+                c if c.isalnum() or c in "-_" else "_"
+                for c in getattr(ws, "name", "workspace")
+            )
+            backup_path, _ = QFileDialog.getSaveFileName(
+                self,
+                "Save Backup Before Purge (required)",
+                f"workspace_{safe_name}_{ts}_backup.zip",
+                "ZIP Archives (*.zip)",
+            )
+            if not backup_path:
+                return
+
+            from src.services.export_service import get_export_service
+            get_export_service().export_to_zip(ws.id, Path(backup_path))  # type: ignore[attr-defined]
+
+            # Step 2: typed confirmation
+            from src.ui.dialogs.workspace_dialogs import PurgeWorkspaceDialog
+            dlg = PurgeWorkspaceDialog(workspace_name=ws.name, parent=self)  # type: ignore[attr-defined]
+            from PyQt6.QtWidgets import QDialog
+            if dlg.exec() != QDialog.DialogCode.Accepted:
+                return
+
+            # Step 3: delete workspace row (CASCADE removes jobs + matches)
+            from src.data.sql.repositories import get_workspace_repository
+            get_workspace_repository().delete(ws.id)  # type: ignore[attr-defined]
+            get_workspace_state().clear()
+
+            QMessageBox.information(
+                self,
+                "Workspace Purged",
+                f'"{ws.name}" has been permanently deleted.\n'  # type: ignore[attr-defined]
+                f"Backup saved at:\n{backup_path}",
+            )
+        except Exception as exc:
+            QMessageBox.critical(self, "Purge Failed", f"Purge error:\n{exc}")
 
     def _group_style(self) -> str:
         """Return common group box style."""
