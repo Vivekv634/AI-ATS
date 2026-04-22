@@ -4,7 +4,7 @@ Base model classes for AI-ATS data models.
 Provides common fields and functionality shared across all models.
 """
 
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from typing import Any, Optional
 
 from bson import ObjectId
@@ -63,12 +63,29 @@ class BaseDocument(TimestampMixin):
 
     id: Optional[PyObjectId] = Field(default=None, alias="_id")
 
+    @staticmethod
+    def _convert_dates(obj: Any) -> Any:
+        """
+        Recursively convert ``datetime.date`` objects to ``datetime.datetime``
+        so that PyMongo's BSON encoder can handle them.
+
+        Only bare ``date`` instances are touched; ``datetime`` (a subclass of
+        ``date``) is already BSON-compatible and is left unchanged.
+        """
+        if type(obj) is date:  # exact type check – datetime is a subclass of date
+            return datetime(obj.year, obj.month, obj.day, tzinfo=timezone.utc)
+        if isinstance(obj, dict):
+            return {k: BaseDocument._convert_dates(v) for k, v in obj.items()}
+        if isinstance(obj, list):
+            return [BaseDocument._convert_dates(item) for item in obj]
+        return obj
+
     def model_dump_mongo(self) -> dict[str, Any]:
         """Convert model to MongoDB-compatible dictionary."""
         data = self.model_dump(by_alias=True, exclude_none=True)
         if data.get("_id") is None:
             data.pop("_id", None)
-        return data
+        return self._convert_dates(data)
 
 
 class EmbeddedModel(BaseModel):

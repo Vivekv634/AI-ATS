@@ -193,10 +193,12 @@ mongodb_data/
 # Logs
 logs/
 *.log
+error.txt
 
 # Temporary files
 tmp/
 temp/
+.branchmind
 *.tmp
 
 # User configuration (may contain sensitive data)
@@ -225,6 +227,3 @@ build_output/
 
 # Large language model files
 *.safetensors
-
-# claude config file
-.claude

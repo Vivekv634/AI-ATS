@@ -74,7 +74,9 @@ def init_db():
         console.print("  Checking database connection...")
         if not db_manager.check_sync_connection():
             console.print("[red]Error: Could not connect to MongoDB.[/red]")
-            console.print("[dim]Make sure MongoDB is running and connection settings are correct.[/dim]")
+            console.print(
+                "[dim]Make sure MongoDB is running and connection settings are correct.[/dim]"
+            )
             raise typer.Exit(1)
 
         console.print("  [green]✓[/green] Connected to MongoDB")
@@ -168,7 +170,9 @@ def import_resumes(
                         candidate_repo.create_from_schema(candidate_data)
                     success_count += 1
                 else:
-                    error_msg = "; ".join(result.errors) if result.errors else "Unknown parsing error"
+                    error_msg = (
+                        "; ".join(result.errors) if result.errors else "Unknown parsing error"
+                    )
                     errors.append((resume_file, error_msg))
                     error_count += 1
 
@@ -274,7 +278,7 @@ def create_job(
             ]
 
             job_data = JobCreate(
-                title=jd_result.title or title,
+                title=title or jd_result.title,
                 description=description,
                 responsibilities=jd_result.responsibilities,
                 company_name=company or jd_result.company_name or "Unknown Company",
@@ -334,6 +338,7 @@ def warmup():
         task = progress.add_task("Loading embedding model...", total=None)
         try:
             from src.ml.embeddings import get_embedding_model
+
             embedding_model = get_embedding_model()
             # Warm up with a test encode
             embedding_model.encode("test warmup sentence")
@@ -346,6 +351,7 @@ def warmup():
         task2 = progress.add_task("Loading NLP parser...", total=None)
         try:
             from src.ml.nlp import get_resume_parser
+
             parser = get_resume_parser()
             progress.update(task2, description="[green]✓[/green] NLP parser loaded")
         except Exception as e:
@@ -356,6 +362,7 @@ def warmup():
         task3 = progress.add_task("Loading bias detector...", total=None)
         try:
             from src.ml.ethics import get_bias_detector
+
             detector = get_bias_detector()
             progress.update(task3, description="[green]✓[/green] Bias detector loaded")
         except Exception as e:
@@ -366,6 +373,7 @@ def warmup():
         task4 = progress.add_task("Loading explainer...", total=None)
         try:
             from src.ml.explainability import get_match_explainer
+
             explainer = get_match_explainer()
             progress.update(task4, description="[green]✓[/green] Explainer loaded")
         except Exception as e:
@@ -378,13 +386,19 @@ def warmup():
 @app.command()
 def match(
     job_id: str = typer.Argument(..., help="Job ID to match candidates against"),
-    candidate_id: Optional[str] = typer.Option(None, "--candidate", "-c", help="Specific candidate ID"),
+    candidate_id: Optional[str] = typer.Option(
+        None, "--candidate", "-c", help="Specific candidate ID"
+    ),
     top_n: int = typer.Option(10, "--top", "-n", help="Number of top matches to show"),
     threshold: float = typer.Option(0.0, "--threshold", "-t", help="Minimum score threshold"),
 ):
     """Match candidates against a job posting."""
     from src.data.database import get_database_manager
-    from src.data.repositories import get_job_repository, get_candidate_repository, get_match_repository
+    from src.data.repositories import (
+        get_job_repository,
+        get_candidate_repository,
+        get_match_repository,
+    )
     from src.ml.nlp import get_resume_parser, get_jd_parser
     from src.core.matching import get_matching_engine
 
@@ -434,12 +448,8 @@ def match(
 
     # Add skill requirements from job model
     if job.skill_requirements:
-        jd_result.required_skills = [
-            s.name for s in job.skill_requirements if s.is_required
-        ]
-        jd_result.preferred_skills = [
-            s.name for s in job.skill_requirements if not s.is_required
-        ]
+        jd_result.required_skills = [s.name for s in job.skill_requirements if s.is_required]
+        jd_result.preferred_skills = [s.name for s in job.skill_requirements if not s.is_required]
 
     # Match each candidate
     from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn
@@ -459,21 +469,31 @@ def match(
             try:
                 # Build a pseudo resume result from candidate data
                 from src.ml.nlp import ResumeParseResult
+
                 resume_result = ResumeParseResult(
-                    success=True,
                     contact={
-                        "full_name": f"{candidate.contact.first_name} {candidate.contact.last_name}",
+                        "full_name": f"{candidate.first_name} {candidate.last_name}",
                         "email": candidate.contact.email,
                     },
-                    skills=[{"name": s.name, "proficiency": s.proficiency_level or "intermediate"}
-                            for s in candidate.skills],
+                    skills=[
+                        {"name": s.name, "proficiency": s.proficiency_level or "intermediate"}
+                        for s in candidate.skills
+                    ],
                     experience=[],
                     education=[],
-                    total_experience_years=sum(
-                        (e.end_date.year if e.end_date else 2024) - e.start_date.year
-                        for e in candidate.experience if e.start_date
-                    ) if candidate.experience else 0,
-                    highest_education=candidate.education[0].degree if candidate.education else None,
+                    total_experience_years=(
+                        sum(
+                            (e.end_date.year if e.end_date else 2024) - e.start_date.year
+                            for e in candidate.work_experience
+                            if e.start_date
+                        )
+                        if candidate.work_experience
+                        else 0
+                    ),
+                    highest_education=(
+                        candidate.education[0].degree if candidate.education else None
+                    ),
+                    overall_confidence=1.0,
                 )
 
                 # Run matching
@@ -507,7 +527,7 @@ def match(
     table.add_column("Bias Check", justify="center")
 
     for i, (candidate, match_result) in enumerate(results, 1):
-        name = f"{candidate.contact.first_name} {candidate.contact.last_name}"
+        name = f"{candidate.first_name} {candidate.last_name}"
         score = f"{match_result.overall_score:.1%}"
         level = match_result.score_level.value.upper()
         skills = f"{len(match_result.matched_skills)}/{len(match_result.skill_matches)}"
@@ -522,7 +542,11 @@ def match(
         else:
             level_color = "red"
 
-        bias_status = "✓" if not match_result.bias_check or not match_result.bias_check.potential_bias_detected else "⚠"
+        bias_status = (
+            "✓"
+            if not match_result.bias_check or not match_result.bias_check.potential_bias_detected
+            else "⚠"
+        )
 
         table.add_row(
             str(i),
@@ -553,7 +577,9 @@ def match(
 
 @app.command()
 def list_jobs(
-    status: Optional[str] = typer.Option(None, "--status", "-s", help="Filter by status (draft/open/closed/filled)"),
+    status: Optional[str] = typer.Option(
+        None, "--status", "-s", help="Filter by status (draft/open/closed/filled)"
+    ),
     limit: int = typer.Option(20, "--limit", "-l", help="Maximum number of jobs to show"),
 ):
     """List all jobs in the database."""
@@ -644,10 +670,13 @@ def list_candidates(
     table.add_column("Status", justify="center")
 
     for candidate in candidates:
-        name = f"{candidate.contact.first_name} {candidate.contact.last_name}"
+        name = f"{candidate.first_name} {candidate.last_name}"
         email = candidate.contact.email or "N/A"
         skill_count = len(candidate.skills) if candidate.skills else 0
 
+        status_val = (
+            candidate.status.value if hasattr(candidate.status, "value") else str(candidate.status)
+        )
         status_color = {
             "new": "cyan",
             "screening": "yellow",
@@ -657,14 +686,14 @@ def list_candidates(
             "hired": "green",
             "rejected": "red",
             "withdrawn": "dim",
-        }.get(candidate.status.lower() if hasattr(candidate, 'status') else "new", "white")
+        }.get(status_val.lower(), "white")
 
         table.add_row(
             str(candidate.id),
             name[:30] + "..." if len(name) > 30 else name,
             email[:30] + "..." if len(email) > 30 else email,
             str(skill_count),
-            f"[{status_color}]NEW[/{status_color}]",
+            f"[{status_color}]{status_val.upper()}[/{status_color}]",
         )
 
     console.print(table)
@@ -684,7 +713,11 @@ def show_job(
         raise typer.Exit(1)
 
     job_repo = get_job_repository()
-    job = job_repo.get_by_id(job_id)
+    try:
+        job = job_repo.get_by_id(job_id)
+    except ValueError as e:
+        console.print(f"[red]Error: {e}[/red]")
+        raise typer.Exit(1)
 
     if not job:
         console.print(f"[red]Job not found: {job_id}[/red]")
@@ -730,13 +763,17 @@ def show_candidate(
         raise typer.Exit(1)
 
     candidate_repo = get_candidate_repository()
-    candidate = candidate_repo.get_by_id(candidate_id)
+    try:
+        candidate = candidate_repo.get_by_id(candidate_id)
+    except ValueError as e:
+        console.print(f"[red]Error: {e}[/red]")
+        raise typer.Exit(1)
 
     if not candidate:
         console.print(f"[red]Candidate not found: {candidate_id}[/red]")
         raise typer.Exit(1)
 
-    name = f"{candidate.contact.first_name} {candidate.contact.last_name}"
+    name = f"{candidate.first_name} {candidate.last_name}"
 
     console.print(f"\n[bold cyan]Candidate Details[/bold cyan]")
     console.print(f"[dim]{'─' * 50}[/dim]")
@@ -760,19 +797,23 @@ def show_candidate(
         for cat, skills in skills_by_category.items():
             console.print(f"  [cyan]{cat}:[/cyan] {', '.join(skills[:10])}")
 
-    if candidate.experience:
-        console.print(f"\n[bold]Experience ({len(candidate.experience)} positions):[/bold]")
-        for exp in candidate.experience[:3]:
+    if candidate.work_experience:
+        console.print(f"\n[bold]Experience ({len(candidate.work_experience)} positions):[/bold]")
+        for exp in candidate.work_experience[:3]:
             console.print(f"  • {exp.job_title} at {exp.company}")
 
 
 @app.command()
 def audit_logs(
     action: Optional[str] = typer.Option(None, "--action", "-a", help="Filter by action type"),
-    candidate_id: Optional[str] = typer.Option(None, "--candidate", "-c", help="Filter by candidate ID"),
+    candidate_id: Optional[str] = typer.Option(
+        None, "--candidate", "-c", help="Filter by candidate ID"
+    ),
     job_id: Optional[str] = typer.Option(None, "--job", "-j", help="Filter by job ID"),
     limit: int = typer.Option(20, "--limit", "-l", help="Maximum logs to show"),
-    compliance_only: bool = typer.Option(False, "--compliance", help="Show only compliance-relevant logs"),
+    compliance_only: bool = typer.Option(
+        False, "--compliance", help="Show only compliance-relevant logs"
+    ),
 ):
     """View audit logs for compliance and debugging."""
     from src.data.database import get_database_manager
@@ -791,12 +832,14 @@ def audit_logs(
         query["action"] = action
     if candidate_id:
         from bson import ObjectId
+
         if not ObjectId.is_valid(candidate_id):
             console.print(f"[red]Error: Invalid candidate ID format: {candidate_id}[/red]")
             raise typer.Exit(1)
         query["related_candidate_id"] = ObjectId(candidate_id)
     if job_id:
         from bson import ObjectId
+
         if not ObjectId.is_valid(job_id):
             console.print(f"[red]Error: Invalid job ID format: {job_id}[/red]")
             raise typer.Exit(1)
@@ -819,7 +862,11 @@ def audit_logs(
 
     for log in logs:
         timestamp = log.created_at.strftime("%Y-%m-%d %H:%M:%S") if log.created_at else "N/A"
-        resource = f"{log.resource.resource_type}:{log.resource.resource_id[:8]}..." if log.resource else "N/A"
+        resource = (
+            f"{log.resource.resource_type}:{log.resource.resource_id[:8]}..."
+            if log.resource
+            else "N/A"
+        )
         actor = log.actor.actor_id if log.actor else "system"
         compliance = "✓" if log.compliance_relevant else ""
 
@@ -917,6 +964,7 @@ def health_check():
     # Embedding model
     try:
         from src.ml.embeddings import get_embedding_model
+
         model = get_embedding_model()
         console.print(f"  [green]✓[/green] Embedding model ready")
         console.print(f"    Model: {settings.ml.embedding_model}")
@@ -928,6 +976,7 @@ def health_check():
     # Bias detector
     try:
         from src.ml.ethics import get_bias_detector
+
         detector = get_bias_detector()
         console.print("  [green]✓[/green] Bias detector ready")
     except Exception as e:
@@ -937,6 +986,7 @@ def health_check():
     # Explainer
     try:
         from src.ml.explainability import get_match_explainer
+
         explainer = get_match_explainer()
         console.print("  [green]✓[/green] Explainer ready")
     except Exception as e:
@@ -953,7 +1003,9 @@ def health_check():
 
 @app.command()
 def bias_report(
-    job_id: Optional[str] = typer.Option(None, "--job", "-j", help="Generate report for specific job"),
+    job_id: Optional[str] = typer.Option(
+        None, "--job", "-j", help="Generate report for specific job"
+    ),
     output: Optional[Path] = typer.Option(None, "--output", "-o", help="Save report to file"),
 ):
     """Generate a bias analysis report for auditing purposes."""
@@ -979,6 +1031,7 @@ def bias_report(
     query = {}
     if job_id:
         from bson import ObjectId
+
         if not ObjectId.is_valid(job_id):
             console.print(f"[red]Error: Invalid job ID format: {job_id}[/red]")
             raise typer.Exit(1)
@@ -1008,7 +1061,9 @@ def bias_report(
     bias_rate = bias_detected_count / len(matches) * 100 if matches else 0
 
     console.print(f"\n[bold]Bias Detection Summary:[/bold]")
-    console.print(f"  Matches with potential bias indicators: {bias_detected_count} ({bias_rate:.1f}%)")
+    console.print(
+        f"  Matches with potential bias indicators: {bias_detected_count} ({bias_rate:.1f}%)"
+    )
 
     if bias_categories:
         console.print(f"\n[bold]Protected Attributes Detected:[/bold]")
@@ -1026,11 +1081,17 @@ def bias_report(
     # Recommendations
     console.print(f"\n[bold]Recommendations:[/bold]")
     if bias_rate > 20:
-        console.print("  [yellow]⚠[/yellow] High rate of bias indicators detected. Review resume parsing.")
+        console.print(
+            "  [yellow]⚠[/yellow] High rate of bias indicators detected. Review resume parsing."
+        )
     elif bias_rate > 5:
-        console.print("  [yellow]○[/yellow] Some bias indicators found. Consider reviewing flagged matches.")
+        console.print(
+            "  [yellow]○[/yellow] Some bias indicators found. Consider reviewing flagged matches."
+        )
     else:
-        console.print("  [green]✓[/green] Low bias indicator rate. System appears to be functioning well.")
+        console.print(
+            "  [green]✓[/green] Low bias indicator rate. System appears to be functioning well."
+        )
 
     # Save to file if requested
     if output:
@@ -1062,6 +1123,7 @@ def gui():
 # =============================================================================
 # Google Drive Integration Commands
 # =============================================================================
+
 
 @app.command()
 def gdrive_auth():
@@ -1155,12 +1217,14 @@ def gdrive_list(
 def gdrive_import(
     folder_id: str = typer.Argument(..., help="Google Drive folder ID containing resumes"),
     output_dir: Path = typer.Option(
-        Path("data/imports"),
-        "--output", "-o",
-        help="Local directory to save downloaded files"
+        Path("data/imports"), "--output", "-o", help="Local directory to save downloaded files"
     ),
-    process: bool = typer.Option(True, "--process/--no-process", help="Process resumes after download"),
-    skip_existing: bool = typer.Option(True, "--skip-existing/--overwrite", help="Skip already downloaded files"),
+    process: bool = typer.Option(
+        True, "--process/--no-process", help="Process resumes after download"
+    ),
+    skip_existing: bool = typer.Option(
+        True, "--skip-existing/--overwrite", help="Skip already downloaded files"
+    ),
 ):
     """
     Import resumes from a Google Drive folder.
