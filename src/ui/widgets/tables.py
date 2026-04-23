@@ -1,10 +1,13 @@
 """
-Table widgets for AI-ATS application.
+Table widgets — VSCode-style table components.
 
-Provides styled table components for displaying data.
+StyledTable  — bare QTableWidget with VSCode styling + refresh_styles()
+DataTable    — StyledTable + search bar + row-count label + refresh_styles()
 """
 
-from typing import Any, Callable, Optional
+from __future__ import annotations
+
+from typing import Any, Optional
 
 from PyQt6.QtWidgets import (
     QWidget,
@@ -24,28 +27,108 @@ from PyQt6.QtGui import QFont, QColor
 from src.utils.constants import COLORS
 
 
+def _table_qss() -> str:
+    return f"""
+        QTableWidget {{
+            background-color: {COLORS['surface']};
+            color: {COLORS['text_primary']};
+            border: 1px solid {COLORS['border_subtle']};
+            border-radius: 4px;
+            gridline-color: transparent;
+            outline: none;
+        }}
+        QTableWidget::item {{
+            padding: 7px 12px;
+            color: {COLORS['text_primary']};
+            border-bottom: 1px solid {COLORS['border_subtle']};
+        }}
+        QTableWidget::item:selected {{
+            background-color: {COLORS['primary_glow']};
+            color: {COLORS['text_primary']};
+        }}
+        QTableWidget::item:hover:!selected {{
+            background-color: {COLORS['surface_overlay']};
+        }}
+        QHeaderView::section {{
+            background-color: {COLORS['surface_elevated']};
+            color: {COLORS['text_secondary']};
+            font-weight: 700;
+            font-size: 10px;
+            text-transform: uppercase;
+            letter-spacing: 0.8px;
+            padding: 10px 12px;
+            border: none;
+            border-bottom: 1px solid {COLORS['border_muted']};
+            border-right: 1px solid {COLORS['border_subtle']};
+        }}
+        QTableWidget QTableCornerButton::section {{
+            background-color: {COLORS['surface_elevated']};
+            border: none;
+        }}
+        QScrollBar:vertical {{
+            background: transparent;
+            width: 10px;
+        }}
+        QScrollBar::handle:vertical {{
+            background: {COLORS['border_muted']};
+            border-radius: 5px;
+            min-height: 20px;
+            margin: 2px 2px;
+        }}
+        QScrollBar::handle:vertical:hover {{ background: {COLORS['text_tertiary']}; }}
+        QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{ height: 0; }}
+        QScrollBar:horizontal {{
+            background: transparent;
+            height: 10px;
+        }}
+        QScrollBar::handle:horizontal {{
+            background: {COLORS['border_muted']};
+            border-radius: 5px;
+            min-width: 20px;
+            margin: 2px 2px;
+        }}
+        QScrollBar::handle:horizontal:hover {{ background: {COLORS['text_tertiary']}; }}
+        QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {{ width: 0; }}
+    """
+
+
+def _search_qss() -> str:
+    return f"""
+        QLineEdit {{
+            background-color: {COLORS['surface_elevated']};
+            color: {COLORS['text_primary']};
+            border: 1px solid {COLORS['border_muted']};
+            border-radius: 2px;
+            padding: 6px 10px;
+            font-size: 12px;
+        }}
+        QLineEdit:focus {{
+            border-color: {COLORS['primary']};
+        }}
+        QLineEdit:hover:!focus {{
+            border-color: {COLORS['text_tertiary']};
+        }}
+    """
+
+
 class StyledTable(QTableWidget):
     """
-    Styled table widget with consistent appearance.
-
-    Provides a clean, modern table design with hover effects
-    and selection highlighting.
+    VSCode-styled table widget with alternating row colours disabled
+    (VSCode uses flat rows) and a thin-line selection highlight.
     """
 
-    row_clicked = pyqtSignal(int)  # Emits row index when clicked
-    row_double_clicked = pyqtSignal(int)  # Emits row index on double-click
-    selection_count_changed = pyqtSignal(int)  # Emits number of selected rows
+    row_clicked = pyqtSignal(int)
+    row_double_clicked = pyqtSignal(int)
+    selection_count_changed = pyqtSignal(int)
 
-    def __init__(self, multi_select: bool = False, parent=None):
-        """Initialize the styled table."""
+    def __init__(self, multi_select: bool = False, parent=None) -> None:
         super().__init__(parent)
         self._multi_select = multi_select
         self._setup_style()
         self._connect_signals()
 
-    def _setup_style(self):
-        """Apply table styling."""
-        self.setAlternatingRowColors(True)
+    def _setup_style(self) -> None:
+        self.setAlternatingRowColors(False)
         self.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         if self._multi_select:
             self.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
@@ -54,156 +137,65 @@ class StyledTable(QTableWidget):
         self.setShowGrid(False)
         self.setFrameShape(QFrame.Shape.NoFrame)
 
-        # Header styling
         header = self.horizontalHeader()
         header.setDefaultAlignment(Qt.AlignmentFlag.AlignLeft)
         header.setHighlightSections(False)
         header.setStretchLastSection(True)
         header.setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
 
-        vertical_header = self.verticalHeader()
-        vertical_header.setVisible(False)
-        vertical_header.setDefaultSectionSize(48)
+        vert = self.verticalHeader()
+        vert.setVisible(False)
+        vert.setDefaultSectionSize(44)
 
-        self.setStyleSheet(f"""
-            QTableWidget {{
-                background-color: {COLORS['surface_elevated']};
-                color: {COLORS['text_primary']};
-                border: 1px solid {COLORS['border_subtle']};
-                border-radius: 8px;
-                gridline-color: transparent;
-            }}
-            QTableWidget::item {{
-                padding: 8px 12px;
-                color: {COLORS['text_primary']};
-                border-bottom: 1px solid {COLORS['border_subtle']};
-            }}
-            QTableWidget::item:selected {{
-                background-color: {COLORS['primary_glow']};
-                color: {COLORS['text_primary']};
-            }}
-            QTableWidget::item:hover {{
-                background-color: {COLORS['surface_overlay']};
-            }}
-            QHeaderView::section {{
-                background-color: {COLORS['surface_overlay']};
-                color: {COLORS['text_secondary']};
-                font-weight: 600;
-                font-size: 11px;
-                text-transform: uppercase;
-                letter-spacing: 0.5px;
-                padding: 12px;
-                border: none;
-                border-bottom: 1px solid {COLORS['border_muted']};
-            }}
-            QTableWidget QTableCornerButton::section {{
-                background-color: {COLORS['surface_overlay']};
-                border: none;
-            }}
-            QScrollBar:vertical {{
-                background-color: {COLORS['surface_elevated']};
-                width: 8px;
-                border-radius: 4px;
-            }}
-            QScrollBar::handle:vertical {{
-                background-color: {COLORS['border_muted']};
-                border-radius: 4px;
-                min-height: 20px;
-            }}
-            QScrollBar::handle:vertical:hover {{
-                background-color: {COLORS['text_tertiary']};
-            }}
-            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{
-                height: 0px;
-            }}
-            QScrollBar:horizontal {{
-                background-color: {COLORS['surface_elevated']};
-                height: 8px;
-                border-radius: 4px;
-            }}
-            QScrollBar::handle:horizontal {{
-                background-color: {COLORS['border_muted']};
-                border-radius: 4px;
-                min-width: 20px;
-            }}
-            QScrollBar::handle:horizontal:hover {{
-                background-color: {COLORS['text_tertiary']};
-            }}
-            QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {{
-                width: 0px;
-            }}
-        """)
+        self.setStyleSheet(_table_qss())
 
-    def _connect_signals(self):
-        """Connect table signals."""
+    def _connect_signals(self) -> None:
         self.cellClicked.connect(lambda row, _: self.row_clicked.emit(row))
         self.cellDoubleClicked.connect(lambda row, _: self.row_double_clicked.emit(row))
         self.itemSelectionChanged.connect(self._on_selection_changed)
 
-    def _on_selection_changed(self):
-        """Emit the number of uniquely selected rows."""
+    def _on_selection_changed(self) -> None:
         count = len(set(item.row() for item in self.selectedItems()))
         self.selection_count_changed.emit(count)
 
-    def set_columns(self, columns: list[str]):
-        """Set table column headers."""
+    def set_columns(self, columns: list[str]) -> None:
         self.setColumnCount(len(columns))
         self.setHorizontalHeaderLabels(columns)
 
-    def add_row(self, values: list[Any], data: Any = None):
-        """
-        Add a row to the table.
-
-        Args:
-            values: List of values for each column.
-            data: Optional data to associate with the row.
-        """
+    def add_row(self, values: list[Any], data: Any = None) -> None:
         row = self.rowCount()
         self.insertRow(row)
-
         for col, value in enumerate(values):
             item = QTableWidgetItem(str(value))
             item.setData(Qt.ItemDataRole.UserRole, data)
             self.setItem(row, col, item)
 
-    def clear_rows(self):
-        """Clear all rows from the table."""
+    def clear_rows(self) -> None:
         self.setRowCount(0)
 
     def get_row_data(self, row: int) -> Any:
-        """Get the data associated with a row."""
         item = self.item(row, 0)
-        if item:
-            return item.data(Qt.ItemDataRole.UserRole)
-        return None
+        return item.data(Qt.ItemDataRole.UserRole) if item else None
 
     def get_selected_row_data(self) -> Any:
-        """Get data from the currently selected row."""
         selected = self.selectedItems()
-        if selected:
-            return selected[0].data(Qt.ItemDataRole.UserRole)
-        return None
+        return selected[0].data(Qt.ItemDataRole.UserRole) if selected else None
 
     def get_all_selected_rows_data(self) -> list[Any]:
-        """Get data from ALL currently selected rows (one entry per row)."""
         rows = sorted(set(item.row() for item in self.selectedItems()))
-        result = []
-        for row in rows:
-            data = self.get_row_data(row)
-            if data is not None:
-                result.append(data)
-        return result
+        return [d for r in rows if (d := self.get_row_data(r)) is not None]
+
+    def refresh_styles(self) -> None:
+        self.setStyleSheet(_table_qss())
 
 
 class DataTable(QWidget):
     """
-    Complete data table with search and pagination.
-
-    Wraps StyledTable with additional functionality.
+    Full data table: search bar + StyledTable + row-count footer.
     """
 
-    row_selected = pyqtSignal(object)  # Emits row data when selected
-    selection_changed = pyqtSignal(int)  # Emits number of selected rows
+    row_selected = pyqtSignal(object)
+    selection_changed = pyqtSignal(int)
 
     def __init__(
         self,
@@ -211,82 +203,44 @@ class DataTable(QWidget):
         searchable: bool = True,
         multi_select: bool = False,
         parent=None,
-    ):
-        """
-        Initialize the data table.
-
-        Args:
-            columns: List of column headers.
-            searchable: Whether to show search box.
-            multi_select: Allow selecting multiple rows (Ctrl/Shift+click).
-            parent: Parent widget.
-        """
+    ) -> None:
         super().__init__(parent)
         self.columns = columns
         self.searchable = searchable
         self._multi_select = multi_select
-        self._all_data = []  # Store all data for filtering
-
+        self._all_data: list[dict] = []
         self._setup_ui()
 
-    def _setup_ui(self):
-        """Set up the table UI."""
+    def _setup_ui(self) -> None:
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(12)
+        layout.setSpacing(10)
 
-        # Search bar (if enabled)
         if self.searchable:
-            search_layout = QHBoxLayout()
-
             self.search_input = QLineEdit()
-            self.search_input.setPlaceholderText("Search...")
-            self.search_input.setMinimumHeight(36)
-            self.search_input.setStyleSheet(f"""
-                QLineEdit {{
-                    background-color: {COLORS['surface_elevated']};
-                    color: {COLORS['text_primary']};
-                    border: 1px solid {COLORS['border_muted']};
-                    border-radius: 6px;
-                    padding: 8px 12px;
-                    font-size: 13px;
-                }}
-                QLineEdit:focus {{
-                    border-color: {COLORS['primary']};
-                }}
-            """)
+            self.search_input.setPlaceholderText("Search…")
+            self.search_input.setMinimumHeight(32)
+            self.search_input.setStyleSheet(_search_qss())
             self.search_input.textChanged.connect(self._filter_data)
-            search_layout.addWidget(self.search_input)
+            layout.addWidget(self.search_input)
 
-            layout.addLayout(search_layout)
-
-        # Table
         self.table = StyledTable(multi_select=self._multi_select)
         self.table.set_columns(self.columns)
         self.table.row_clicked.connect(self._on_row_clicked)
         self.table.selection_count_changed.connect(self.selection_changed)
         layout.addWidget(self.table)
 
-        # Row count label
         self.count_label = QLabel("0 items")
-        self.count_label.setStyleSheet(f"""
-            color: {COLORS['text_secondary']};
-            font-size: 12px;
-        """)
+        self.count_label.setStyleSheet(
+            f"color: {COLORS['text_secondary']}; font-size: 11px;"
+        )
         layout.addWidget(self.count_label)
 
     def set_data(
         self,
         data: list[dict],
         columns_map: Optional[dict[str, str]] = None,
-    ):
-        """
-        Set table data.
-
-        Args:
-            data: List of dictionaries with row data.
-            columns_map: Optional mapping of column headers to dict keys.
-        """
+    ) -> None:
         self._all_data = data
         self._display_data(data, columns_map)
 
@@ -294,63 +248,54 @@ class DataTable(QWidget):
         self,
         data: list[dict],
         columns_map: Optional[dict[str, str]] = None,
-    ):
-        """Display data in the table."""
+    ) -> None:
         self.table.clear_rows()
-
-        # Default mapping uses column headers as keys
         if columns_map is None:
             columns_map = {col: col.lower().replace(" ", "_") for col in self.columns}
-
         for row_data in data:
-            values = []
-            for col in self.columns:
-                key = columns_map.get(col, col)
-                value = row_data.get(key, "")
-                values.append(value)
+            values = [row_data.get(columns_map.get(col, col), "") for col in self.columns]
             self.table.add_row(values, row_data)
-
         self._update_count()
 
-    def _filter_data(self, search_text: str):
-        """Filter data based on search text."""
+    def _filter_data(self, search_text: str) -> None:
         if not search_text:
             self._display_data(self._all_data)
             return
-
         search_lower = search_text.lower()
-        filtered = []
-
-        for row_data in self._all_data:
-            # Search in all string values
-            for value in row_data.values():
-                if isinstance(value, str) and search_lower in value.lower():
-                    filtered.append(row_data)
-                    break
-
+        filtered = [
+            row for row in self._all_data
+            if any(
+                search_lower in str(v).lower()
+                for v in row.values()
+                if isinstance(v, (str, int, float))
+            )
+        ]
         self._display_data(filtered)
 
-    def _on_row_clicked(self, row: int):
-        """Handle row click."""
+    def _on_row_clicked(self, row: int) -> None:
         data = self.table.get_row_data(row)
         if data:
             self.row_selected.emit(data)
 
-    def _update_count(self):
-        """Update the row count label."""
+    def _update_count(self) -> None:
         count = self.table.rowCount()
         self.count_label.setText(f"{count} item{'s' if count != 1 else ''}")
 
-    def clear(self):
-        """Clear all data."""
+    def clear(self) -> None:
         self._all_data = []
         self.table.clear_rows()
         self._update_count()
 
     def get_selected_data(self) -> Any:
-        """Get currently selected row data."""
         return self.table.get_selected_row_data()
 
     def get_all_selected_data(self) -> list[Any]:
-        """Get data from all currently selected rows."""
         return self.table.get_all_selected_rows_data()
+
+    def refresh_styles(self) -> None:
+        self.table.refresh_styles()
+        if hasattr(self, "search_input"):
+            self.search_input.setStyleSheet(_search_qss())
+        self.count_label.setStyleSheet(
+            f"color: {COLORS['text_secondary']}; font-size: 11px;"
+        )

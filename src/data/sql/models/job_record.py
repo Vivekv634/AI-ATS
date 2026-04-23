@@ -45,7 +45,7 @@ class JobRecord(SQLBase, TimestampMixin):
     company_name: Mapped[Optional[str]] = mapped_column(String(300), nullable=True)
     description_snippet: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     status: Mapped[JobStatus] = mapped_column(
-        SAEnum(JobStatus, name="job_status"),
+        SAEnum(JobStatus, name="job_status", values_callable=lambda x: [e.value for e in x]),
         nullable=False,
         default=JobStatus.OPEN,
         server_default=JobStatus.OPEN.value,

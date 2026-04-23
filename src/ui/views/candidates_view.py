@@ -77,9 +77,10 @@ class CandidateFormDialog(QDialog):
                 font-size: 13px;
             }}
             QLineEdit, QTextEdit, QComboBox, QSpinBox {{
-                background-color: {COLORS['surface']};
-                border: 1px solid COLORS['border_subtle'];
-                border-radius: 6px;
+                background-color: {COLORS['surface_elevated']};
+                color: {COLORS['text_primary']};
+                border: 1px solid {COLORS['border_subtle']};
+                border-radius: 2px;
                 padding: 8px;
                 font-size: 13px;
             }}
@@ -87,19 +88,21 @@ class CandidateFormDialog(QDialog):
                 border-color: {COLORS['primary']};
             }}
             QTabWidget::pane {{
-                border: 1px solid COLORS['border_subtle'];
-                border-radius: 6px;
+                border: 1px solid {COLORS['border_subtle']};
+                border-radius: 0px;
                 background-color: {COLORS['surface']};
             }}
             QTabBar::tab {{
                 padding: 8px 16px;
                 margin-right: 4px;
-                background-color: COLORS['surface_elevated'];
-                border-top-left-radius: 6px;
-                border-top-right-radius: 6px;
+                background-color: {COLORS['surface_elevated']};
+                color: {COLORS['text_secondary']};
+                border: none;
+                border-bottom: 2px solid transparent;
             }}
             QTabBar::tab:selected {{
                 background-color: {COLORS['surface']};
+                color: {COLORS['text_primary']};
                 border-bottom: 2px solid {COLORS['primary']};
             }}
         """)
@@ -273,8 +276,8 @@ class CandidateDetailPanel(QFrame):
         self.setStyleSheet(f"""
             QFrame {{
                 background-color: {COLORS['surface']};
-                border: 1px solid COLORS['border_subtle'];
-                border-radius: 8px;
+                border: 1px solid {COLORS['border_subtle']};
+                border-radius: 4px;
             }}
         """)
         self.setMinimumWidth(300)
@@ -310,7 +313,7 @@ class CandidateDetailPanel(QFrame):
         # Divider
         divider = QFrame()
         divider.setFrameShape(QFrame.Shape.HLine)
-        divider.setStyleSheet("background-color: COLORS['border_subtle']; border: none;")
+        divider.setStyleSheet(f"background-color: {COLORS['border_subtle']}; border: none;")
         divider.setFixedHeight(1)
         layout.addWidget(divider)
 
@@ -335,7 +338,7 @@ class CandidateDetailPanel(QFrame):
         # Divider
         divider2 = QFrame()
         divider2.setFrameShape(QFrame.Shape.HLine)
-        divider2.setStyleSheet("background-color: COLORS['border_subtle']; border: none;")
+        divider2.setStyleSheet(f"background-color: {COLORS['border_subtle']}; border: none;")
         divider2.setFixedHeight(1)
         layout.addWidget(divider2)
 
@@ -357,7 +360,7 @@ class CandidateDetailPanel(QFrame):
         # Divider
         divider3 = QFrame()
         divider3.setFrameShape(QFrame.Shape.HLine)
-        divider3.setStyleSheet("background-color: COLORS['border_subtle']; border: none;")
+        divider3.setStyleSheet(f"background-color: {COLORS['border_subtle']}; border: none;")
         divider3.setFixedHeight(1)
         layout.addWidget(divider3)
 
@@ -422,12 +425,12 @@ class CandidateDetailPanel(QFrame):
         # Update status badge color based on status
         status_colors = {
             "new": COLORS["primary"],
-            "screening": "#f59e0b",
-            "interview": "#8b5cf6",
+            "screening": COLORS["warning"],
+            "interview": COLORS["accent"],
             "offer": COLORS["success"],
-            "hired": "#10b981",
+            "hired": COLORS["success"],
             "rejected": COLORS["error"],
-            "withdrawn": "#6b7280",
+            "withdrawn": COLORS["text_secondary"],
         }
         color = status_colors.get(status, COLORS["primary"])
         self.status_label.setStyleSheet(f"""
@@ -458,10 +461,10 @@ class CandidateDetailPanel(QFrame):
             for skill in skills[:6]:  # Show max 6 skills
                 skill_label = QLabel(skill)
                 skill_label.setStyleSheet(f"""
-                    background-color: #e0e7ff;
+                    background-color: {COLORS['primary_glow']};
                     color: {COLORS['primary']};
                     padding: 4px 8px;
-                    border-radius: 4px;
+                    border-radius: 2px;
                     font-size: 11px;
                     border: none;
                 """)
@@ -486,10 +489,10 @@ class CandidateDetailPanel(QFrame):
         if candidate.get("github"):
             github_btn = QLabel("GitHub")
             github_btn.setStyleSheet(f"""
-                background-color: #333;
-                color: white;
+                background-color: {COLORS['activitybar_bg']};
+                color: {COLORS['text_on_primary']};
                 padding: 6px 12px;
-                border-radius: 4px;
+                border-radius: 2px;
                 font-size: 11px;
                 border: none;
             """)
@@ -510,6 +513,23 @@ class CandidateDetailPanel(QFrame):
             self.links_layout.addWidget(portfolio_btn)
 
         self.links_layout.addStretch()
+
+    def refresh_styles(self) -> None:
+        self.setStyleSheet(f"""
+            QFrame {{
+                background-color: {COLORS['surface']};
+                border: 1px solid {COLORS['border_subtle']};
+                border-radius: 4px;
+            }}
+        """)
+        self.name_label.setStyleSheet(f"color: {COLORS['text_primary']}; border: none;")
+        self.headline_label.setStyleSheet(f"color: {COLORS['text_secondary']}; border: none;")
+        self.email_label.setStyleSheet(f"color: {COLORS['text_secondary']}; border: none;")
+        self.phone_label.setStyleSheet(f"color: {COLORS['text_secondary']}; border: none;")
+        self.location_label.setStyleSheet(f"color: {COLORS['text_secondary']}; border: none;")
+        self.experience_label.setStyleSheet(f"color: {COLORS['text_secondary']}; border: none;")
+        self.education_label.setStyleSheet(f"color: {COLORS['text_secondary']}; border: none;")
+        self.summary_label.setStyleSheet(f"color: {COLORS['text_secondary']}; border: none;")
 
     def _clear_skills(self):
         """Clear all skill labels."""
@@ -645,11 +665,11 @@ class CandidatesView(BaseView):
 
         # Main content with splitter
         splitter = QSplitter(Qt.Orientation.Horizontal)
-        splitter.setStyleSheet("""
-            QSplitter::handle {
-                background-color: COLORS['border_subtle'];
+        splitter.setStyleSheet(f"""
+            QSplitter::handle {{
+                background-color: {COLORS['border_subtle']};
                 width: 1px;
-            }
+            }}
         """)
 
         # Left side - Table
@@ -713,10 +733,14 @@ class CandidatesView(BaseView):
         self.status_filter.setMinimumWidth(120)
         self.status_filter.setStyleSheet(f"""
             QComboBox {{
-                background-color: {COLORS['surface']};
-                border: 1px solid COLORS['border_subtle'];
-                border-radius: 6px;
+                background-color: {COLORS['surface_elevated']};
+                color: {COLORS['text_primary']};
+                border: 1px solid {COLORS['border_muted']};
+                border-radius: 2px;
                 padding: 6px 12px;
+            }}
+            QComboBox:focus {{
+                border-color: {COLORS['primary']};
             }}
         """)
         self.status_filter.currentIndexChanged.connect(self._filter_candidates)
@@ -729,6 +753,12 @@ class CandidatesView(BaseView):
         self.edit_btn.clicked.connect(self._edit_candidate)
         self.edit_btn.setEnabled(False)
         toolbar.addWidget(self.edit_btn)
+
+        # Select All / Deselect All toggle
+        self.select_all_btn = SecondaryButton("Select All")
+        self.select_all_btn.setToolTip("Select all rows (Ctrl+A), click again to deselect")
+        self.select_all_btn.clicked.connect(self._toggle_select_all)
+        toolbar.addWidget(self.select_all_btn)
 
         # Delete button
         self.delete_btn = DangerButton("Delete")
@@ -797,18 +827,33 @@ class CandidatesView(BaseView):
             filtered = [c for c in self._candidates if c.get("status") == status]
             self._refresh_table(filtered)
 
-    def _on_selection_changed(self, count: int):
+    def _toggle_select_all(self) -> None:
+        """Select all rows if any are unselected; deselect all otherwise."""
+        table = self.candidates_table.table
+        total = table.rowCount()
+        selected = len(set(item.row() for item in table.selectedItems()))
+        if selected < total and total > 0:
+            table.selectAll()
+            self.select_all_btn.setText("Deselect All")
+        else:
+            table.clearSelection()
+            self.select_all_btn.setText("Select All")
+
+    def _on_selection_changed(self, count: int) -> None:
         """Update toolbar button states when the table selection changes."""
-        # Edit requires exactly one row; delete requires at least one.
         self.edit_btn.setEnabled(count == 1)
         self.delete_btn.setEnabled(count >= 1)
         if count > 1:
             self.delete_btn.setText(f"Delete ({count})")
         else:
             self.delete_btn.setText("Delete")
-        # Clear tracked candidate when nothing is selected
+        # Keep Select All label in sync
+        total = self.candidates_table.table.rowCount()
         if count == 0:
             self._current_candidate = None
+            self.select_all_btn.setText("Select All")
+        elif total > 0 and count == total:
+            self.select_all_btn.setText("Deselect All")
 
     def _on_candidate_selected(self, data: dict):
         """Handle candidate row click — update detail panel and track for editing."""
@@ -1239,6 +1284,22 @@ class CandidatesView(BaseView):
             if db_errors > 0:
                 msg += f"\n{db_errors} could not be saved to database."
             QMessageBox.information(self, "Import Complete", msg)
+
+    def refresh_styles(self) -> None:
+        self.status_filter.setStyleSheet(f"""
+            QComboBox {{
+                background-color: {COLORS['surface_elevated']};
+                color: {COLORS['text_primary']};
+                border: 1px solid {COLORS['border_muted']};
+                border-radius: 2px;
+                padding: 6px 12px;
+            }}
+            QComboBox:focus {{
+                border-color: {COLORS['primary']};
+            }}
+        """)
+        self.candidates_table.refresh_styles()
+        self.detail_panel.refresh_styles()
 
     def refresh(self):
         """Reload candidates from the database."""

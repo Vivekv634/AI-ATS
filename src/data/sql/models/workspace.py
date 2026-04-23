@@ -33,7 +33,7 @@ class Workspace(SQLBase, TimestampMixin):
     name: Mapped[str] = mapped_column(String(200), nullable=False)
     description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     status: Mapped[WorkspaceStatus] = mapped_column(
-        SAEnum(WorkspaceStatus, name="workspace_status"),
+        SAEnum(WorkspaceStatus, name="workspace_status", values_callable=lambda x: [e.value for e in x]),
         nullable=False,
         default=WorkspaceStatus.ACTIVE,
         server_default=WorkspaceStatus.ACTIVE.value,

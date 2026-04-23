@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 from typing import Optional
 
 from PyQt6.QtCore import Qt
-from PyQt6.QtGui import QFont
+from PyQt6.QtGui import QFont, QColor
 from PyQt6.QtWidgets import (
     QDialog,
     QDialogButtonBox,
@@ -19,10 +19,55 @@ from PyQt6.QtWidgets import (
     QPlainTextEdit,
     QVBoxLayout,
     QWidget,
+    QFrame,
 )
 
 from src.utils.constants import COLORS
 from src.ui.widgets.buttons import DangerButton, PrimaryButton, SecondaryButton
+
+
+def _dialog_qss() -> str:
+    return f"""
+        QDialog {{
+            background-color: {COLORS['surface']};
+        }}
+        QLabel {{
+            color: {COLORS['text_primary']};
+            background-color: transparent;
+        }}
+        QLineEdit, QPlainTextEdit {{
+            background-color: {COLORS['surface_elevated']};
+            color: {COLORS['text_primary']};
+            border: 1px solid {COLORS['border_muted']};
+            border-radius: 2px;
+            padding: 5px 8px;
+        }}
+        QLineEdit:focus, QPlainTextEdit:focus {{
+            border-color: {COLORS['primary']};
+        }}
+        QListWidget {{
+            background-color: {COLORS['surface_elevated']};
+            color: {COLORS['text_primary']};
+            border: 1px solid {COLORS['border_muted']};
+            border-radius: 2px;
+            outline: none;
+        }}
+        QListWidget::item {{
+            padding: 8px 10px;
+            border-bottom: 1px solid {COLORS['border_subtle']};
+        }}
+        QListWidget::item:selected {{
+            background-color: {COLORS['primary_glow']};
+            color: {COLORS['primary']};
+        }}
+        QListWidget::item:hover:!selected {{
+            background-color: {COLORS['surface_overlay']};
+        }}
+        QDialogButtonBox QPushButton {{
+            min-width: 72px;
+            padding: 5px 14px;
+        }}
+    """
 
 
 # ── Workspace Selector ─────────────────────────────────────────────────────────
@@ -33,50 +78,39 @@ class WorkspaceSelectorDialog(QDialog):
     def __init__(self, parent: Optional[QWidget] = None) -> None:
         super().__init__(parent)
         self.setWindowTitle("Switch Workspace")
-        self.setMinimumSize(540, 440)
+        self.setMinimumSize(560, 460)
         self._selected_workspace: Optional[object] = None
         self._workspaces: list[object] = []
         self._build_ui()
         self._load()
 
-    # ── UI construction ────────────────────────────────────────────────────────
-
     def _build_ui(self) -> None:
+        self.setStyleSheet(_dialog_qss())
         layout = QVBoxLayout(self)
         layout.setContentsMargins(20, 20, 20, 20)
         layout.setSpacing(12)
 
-        subtitle = QLabel("Select a workspace or create a new one")
+        # Title
+        title_label = QLabel("Switch Workspace")
+        title_label.setFont(QFont("Segoe UI", 13, QFont.Weight.DemiBold))
+        layout.addWidget(title_label)
+
+        subtitle = QLabel("Select a workspace or create a new one.")
         subtitle.setStyleSheet(
-            f"color: {COLORS['text_secondary']}; font-size: 12px;"
+            f"color: {COLORS['text_secondary']}; font-size: 11px;"
         )
         layout.addWidget(subtitle)
 
-        self._list = QListWidget()
-        self._list.setStyleSheet(
-            f"""
-            QListWidget {{
-                background-color: {COLORS['surface_elevated']};
-                border: 1px solid {COLORS['border_muted']};
-                border-radius: 8px;
-                padding: 4px;
-                outline: none;
-            }}
-            QListWidget::item {{
-                color: {COLORS['text_primary']};
-                padding: 10px 12px;
-                border-radius: 6px;
-                margin: 1px 2px;
-            }}
-            QListWidget::item:selected {{
-                background-color: {COLORS['primary_glow']};
-                color: {COLORS['primary']};
-            }}
-            QListWidget::item:hover:!selected {{
-                background-color: {COLORS['surface_overlay']};
-            }}
-            """
+        # Hairline separator
+        sep = QFrame()
+        sep.setFrameShape(QFrame.Shape.HLine)
+        sep.setFixedHeight(1)
+        sep.setStyleSheet(
+            f"background-color: {COLORS['border_subtle']}; border: none;"
         )
+        layout.addWidget(sep)
+
+        self._list = QListWidget()
         self._list.itemDoubleClicked.connect(self._on_switch)
         self._list.itemSelectionChanged.connect(self._on_selection_changed)
         layout.addWidget(self._list)
@@ -101,8 +135,6 @@ class WorkspaceSelectorDialog(QDialog):
 
         layout.addLayout(btn_row)
 
-    # ── Data loading ───────────────────────────────────────────────────────────
-
     def _load(self) -> None:
         try:
             from src.data.sql.repositories import (
@@ -124,9 +156,7 @@ class WorkspaceSelectorDialog(QDialog):
             )
             placeholder.setFlags(placeholder.flags() & ~Qt.ItemFlag.ItemIsSelectable)
             placeholder.setForeground(
-                __import__("PyQt6.QtGui", fromlist=["QColor"]).QColor(
-                    COLORS["text_tertiary"]
-                )
+                QColor(COLORS["text_tertiary"])
             )
             self._list.addItem(placeholder)
             return
@@ -135,11 +165,11 @@ class WorkspaceSelectorDialog(QDialog):
             job_count = 0
             if job_repo is not None:
                 try:
-                    job_count = job_repo.count_for_workspace(ws.id)  # type: ignore[attr-defined]
+                    job_count = job_repo.count_for_workspace(ws.id)
                 except Exception:
                     pass
 
-            last_opened = ws.last_opened_at  # type: ignore[attr-defined]
+            last_opened = ws.last_opened_at
             age_str = ""
             if last_opened is not None:
                 delta = datetime.now(timezone.utc) - last_opened
@@ -147,14 +177,12 @@ class WorkspaceSelectorDialog(QDialog):
 
             jobs_str = f"{job_count} job" + ("s" if job_count != 1 else "")
             label = (
-                f"{ws.name}   "  # type: ignore[attr-defined]
-                f"[{ws.status.value}]{age_str}   ({jobs_str})"  # type: ignore[attr-defined]
+                f"{ws.name}   "
+                f"[{ws.status.value}]{age_str}   ({jobs_str})"
             )
             item = QListWidgetItem(label)
             item.setData(Qt.ItemDataRole.UserRole, ws)
             self._list.addItem(item)
-
-    # ── Event handlers ─────────────────────────────────────────────────────────
 
     def _on_selection_changed(self) -> None:
         items = self._list.selectedItems()
@@ -169,7 +197,7 @@ class WorkspaceSelectorDialog(QDialog):
             return
         from src.data.sql.models.workspace import WorkspaceStatus
         self._switch_btn.setEnabled(True)
-        self._archive_btn.setEnabled(ws.status == WorkspaceStatus.ACTIVE)  # type: ignore[attr-defined]
+        self._archive_btn.setEnabled(ws.status == WorkspaceStatus.ACTIVE)
 
     def _on_switch(self) -> None:
         items = self._list.selectedItems()
@@ -180,7 +208,7 @@ class WorkspaceSelectorDialog(QDialog):
             return
         try:
             from src.data.sql.repositories import get_workspace_repository
-            get_workspace_repository().touch(ws.id)  # type: ignore[attr-defined]
+            get_workspace_repository().touch(ws.id)
         except Exception:
             pass
         self._selected_workspace = ws
@@ -200,9 +228,7 @@ class WorkspaceSelectorDialog(QDialog):
             self._selected_workspace = ws
             self.accept()
         except Exception as exc:
-            QMessageBox.critical(
-                self, "Error", f"Could not create workspace:\n{exc}"
-            )
+            QMessageBox.critical(self, "Error", f"Could not create workspace:\n{exc}")
 
     def _on_archive(self) -> None:
         items = self._list.selectedItems()
@@ -214,7 +240,7 @@ class WorkspaceSelectorDialog(QDialog):
         reply = QMessageBox.question(
             self,
             "Archive Workspace",
-            f'Archive "{ws.name}"?\n\n'  # type: ignore[attr-defined]
+            f'Archive "{ws.name}"?\n\n'
             "Archived workspaces are read-only. You can restore them later from Settings.",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
         )
@@ -222,18 +248,17 @@ class WorkspaceSelectorDialog(QDialog):
             return
         try:
             from src.data.sql.repositories import get_workspace_repository
-            get_workspace_repository().archive(ws.id)  # type: ignore[attr-defined]
+            get_workspace_repository().archive(ws.id)
             self._load()
         except Exception as exc:
-            QMessageBox.critical(
-                self, "Error", f"Could not archive workspace:\n{exc}"
-            )
-
-    # ── Public result ──────────────────────────────────────────────────────────
+            QMessageBox.critical(self, "Error", f"Could not archive workspace:\n{exc}")
 
     @property
     def selected_workspace(self) -> Optional[object]:
         return self._selected_workspace
+
+    def refresh_styles(self) -> None:
+        self.setStyleSheet(_dialog_qss())
 
 
 # ── Create Workspace ───────────────────────────────────────────────────────────
@@ -244,28 +269,47 @@ class CreateWorkspaceDialog(QDialog):
     def __init__(self, parent: Optional[QWidget] = None) -> None:
         super().__init__(parent)
         self.setWindowTitle("New Workspace")
-        self.setFixedWidth(440)
+        self.setFixedWidth(460)
         self._build_ui()
 
     def _build_ui(self) -> None:
+        self.setStyleSheet(_dialog_qss())
         layout = QVBoxLayout(self)
         layout.setContentsMargins(24, 20, 24, 20)
-        layout.setSpacing(12)
+        layout.setSpacing(14)
+
+        title_label = QLabel("Create Workspace")
+        title_label.setFont(QFont("Segoe UI", 13, QFont.Weight.DemiBold))
+        layout.addWidget(title_label)
+
+        sep = QFrame()
+        sep.setFrameShape(QFrame.Shape.HLine)
+        sep.setFixedHeight(1)
+        sep.setStyleSheet(
+            f"background-color: {COLORS['border_subtle']}; border: none;"
+        )
+        layout.addWidget(sep)
 
         form = QFormLayout()
         form.setSpacing(10)
         form.setLabelAlignment(Qt.AlignmentFlag.AlignRight)
 
+        name_label = QLabel("Name *")
+        name_label.setStyleSheet(f"color: {COLORS['text_secondary']}; font-size: 12px;")
+
         self._name_edit = QLineEdit()
         self._name_edit.setPlaceholderText("e.g. Senior Engineers — Q3 2026")
-        self._name_edit.setMinimumHeight(34)
+        self._name_edit.setMinimumHeight(30)
         self._name_edit.textChanged.connect(self._validate)
-        form.addRow("Name *", self._name_edit)
+        form.addRow(name_label, self._name_edit)
+
+        desc_label = QLabel("Description")
+        desc_label.setStyleSheet(f"color: {COLORS['text_secondary']}; font-size: 12px;")
 
         self._desc_edit = QPlainTextEdit()
         self._desc_edit.setPlaceholderText("Optional description…")
-        self._desc_edit.setFixedHeight(80)
-        form.addRow("Description", self._desc_edit)
+        self._desc_edit.setFixedHeight(72)
+        form.addRow(desc_label, self._desc_edit)
 
         layout.addLayout(form)
 
@@ -281,7 +325,7 @@ class CreateWorkspaceDialog(QDialog):
             | QDialogButtonBox.StandardButton.Cancel
         )
         self._save_btn = buttons.button(QDialogButtonBox.StandardButton.Save)
-        self._save_btn.setEnabled(False)  # type: ignore[union-attr]
+        self._save_btn.setEnabled(False)
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
         layout.addWidget(buttons)
@@ -289,16 +333,16 @@ class CreateWorkspaceDialog(QDialog):
     def _validate(self) -> None:
         name = self._name_edit.text().strip()
         if not name:
-            self._error_label.setText("Name is required")
+            self._error_label.setText("Name is required.")
             self._error_label.setVisible(True)
-            self._save_btn.setEnabled(False)  # type: ignore[union-attr]
+            self._save_btn.setEnabled(False)
         elif len(name) > 200:
-            self._error_label.setText("Name must be 200 characters or fewer")
+            self._error_label.setText("Name must be 200 characters or fewer.")
             self._error_label.setVisible(True)
-            self._save_btn.setEnabled(False)  # type: ignore[union-attr]
+            self._save_btn.setEnabled(False)
         else:
             self._error_label.setVisible(False)
-            self._save_btn.setEnabled(True)  # type: ignore[union-attr]
+            self._save_btn.setEnabled(True)
 
     @property
     def workspace_name(self) -> str:
@@ -307,6 +351,9 @@ class CreateWorkspaceDialog(QDialog):
     @property
     def workspace_description(self) -> str:
         return self._desc_edit.toPlainText().strip()
+
+    def refresh_styles(self) -> None:
+        self.setStyleSheet(_dialog_qss())
 
 
 # ── Purge Confirmation ─────────────────────────────────────────────────────────
@@ -321,17 +368,31 @@ class PurgeWorkspaceDialog(QDialog):
     ) -> None:
         super().__init__(parent)
         self.setWindowTitle("Purge Workspace")
-        self.setFixedWidth(480)
+        self.setFixedWidth(500)
         self._workspace_name = workspace_name
         self._build_ui()
 
     def _build_ui(self) -> None:
+        self.setStyleSheet(_dialog_qss())
         layout = QVBoxLayout(self)
         layout.setContentsMargins(24, 20, 24, 20)
         layout.setSpacing(14)
 
+        title_label = QLabel("Purge Workspace")
+        title_label.setFont(QFont("Segoe UI", 13, QFont.Weight.DemiBold))
+        title_label.setStyleSheet(f"color: {COLORS['error']};")
+        layout.addWidget(title_label)
+
+        sep = QFrame()
+        sep.setFrameShape(QFrame.Shape.HLine)
+        sep.setFixedHeight(1)
+        sep.setStyleSheet(
+            f"background-color: {COLORS['border_subtle']}; border: none;"
+        )
+        layout.addWidget(sep)
+
         warning = QLabel(
-            f"⚠  This will permanently delete all data for\n"
+            f"⚠  This will permanently delete all data for\n"
             f'"{self._workspace_name}":\n\n'
             "  • All job records\n"
             "  • All match scores (including manual overrides)\n\n"
@@ -340,14 +401,12 @@ class PurgeWorkspaceDialog(QDialog):
         )
         warning.setWordWrap(True)
         warning.setStyleSheet(
-            f"color: {COLORS['warning']}; font-size: 12px; padding: 14px;"
-            f" background-color: {COLORS['warning_dim']}; border-radius: 8px;"
+            f"color: {COLORS['warning']}; font-size: 12px; padding: 12px;"
+            f" background-color: {COLORS['warning_dim']}; border-radius: 4px;"
         )
         layout.addWidget(warning)
 
-        confirm_label = QLabel(
-            f"Type the workspace name to confirm:"
-        )
+        confirm_label = QLabel("Type the workspace name to confirm:")
         confirm_label.setStyleSheet(
             f"color: {COLORS['text_secondary']}; font-size: 12px;"
         )
@@ -355,7 +414,7 @@ class PurgeWorkspaceDialog(QDialog):
 
         self._confirm_edit = QLineEdit()
         self._confirm_edit.setPlaceholderText(self._workspace_name)
-        self._confirm_edit.setMinimumHeight(34)
+        self._confirm_edit.setMinimumHeight(30)
         self._confirm_edit.textChanged.connect(self._validate)
         layout.addWidget(self._confirm_edit)
 
@@ -377,6 +436,9 @@ class PurgeWorkspaceDialog(QDialog):
         self._purge_btn.setEnabled(
             self._confirm_edit.text().strip() == self._workspace_name
         )
+
+    def refresh_styles(self) -> None:
+        self.setStyleSheet(_dialog_qss())
 
 
 # ── Helpers ────────────────────────────────────────────────────────────────────

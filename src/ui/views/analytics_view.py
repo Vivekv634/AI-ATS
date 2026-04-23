@@ -519,6 +519,9 @@ class MetricTrendCard(Card):
         """Update the displayed value."""
         self.value_label.setText(value)
 
+    def refresh_styles(self) -> None:
+        self.value_label.setStyleSheet(f"color: {COLORS['text_primary']};")
+
 
 class AnalyticsView(BaseView):
     """
@@ -623,8 +626,11 @@ class AnalyticsView(BaseView):
                 background-color: {COLORS['surface_elevated']};
                 color: {COLORS['text_primary']};
                 border: 1px solid {COLORS['border_muted']};
-                border-radius: 6px;
+                border-radius: 2px;
                 padding: 8px 12px;
+            }}
+            QComboBox:focus {{
+                border-color: {COLORS['primary']};
             }}
         """)
         self.period_combo.currentIndexChanged.connect(self._on_period_changed)
@@ -694,7 +700,7 @@ class AnalyticsView(BaseView):
             QFrame {{
                 background-color: {COLORS['surface_elevated']};
                 border: 1px solid {COLORS['border_subtle']};
-                border-radius: 8px;
+                border-radius: 4px;
             }}
         """)
 
@@ -772,7 +778,7 @@ class AnalyticsView(BaseView):
             QFrame {{
                 background-color: {COLORS['surface_elevated']};
                 border: 1px solid {COLORS['border_subtle']};
-                border-radius: 8px;
+                border-radius: 4px;
             }}
         """)
 
@@ -856,6 +862,31 @@ class AnalyticsView(BaseView):
                 row.addWidget(label, width)
 
             self.job_perf_layout.addWidget(row_widget)
+
+    def refresh_styles(self) -> None:
+        self.period_combo.setStyleSheet(f"""
+            QComboBox {{
+                background-color: {COLORS['surface_elevated']};
+                color: {COLORS['text_primary']};
+                border: 1px solid {COLORS['border_muted']};
+                border-radius: 2px;
+                padding: 8px 12px;
+            }}
+            QComboBox:focus {{
+                border-color: {COLORS['primary']};
+            }}
+        """)
+        self.job_perf_card.setStyleSheet(f"""
+            QFrame {{
+                background-color: {COLORS['surface_elevated']};
+                border: 1px solid {COLORS['border_subtle']};
+                border-radius: 4px;
+            }}
+        """)
+        self.funnel_chart.update()
+        self.sources_chart.update()
+        self.skills_chart.update()
+        self.matching_chart.update()
 
     def _on_period_changed(self, index: int):
         """Handle time period change."""

@@ -219,46 +219,50 @@ class AuditAction(str, Enum):
 # UI Constants
 # =============================================================================
 
-# Color palette for the application
-COLORS: Final[dict[str, str]] = {
-    # ── Brand ──────────────────────────────────────────────────────────────────
-    "primary":          "#4B9EFF",   # Accessible bright blue (4.7:1 on bg_base)
-    "primary_dark":     "#1D6FCC",   # Pressed/deep state
-    "primary_glow":     "#1A3A6E",   # Subtle glow bg behind primary elements
-    "accent":           "#7C6AF7",   # Indigo accent — used on AI/ML badges
-    "accent_dark":      "#6352E8",   # Pressed/hover accent state
-    "accent_dim":       "#2A2456",   # Dimmed accent background
-    "secondary":        "#8B949E",   # Neutral label colour
+# Color palette — mutable so ThemeManager can swap dark ↔ light in-place.
+# Default is dark (VSCode Dark+). Do not annotate as Final.
+COLORS: dict[str, str] = {
+    # ── Brand / Interactive ────────────────────────────────────────────────────
+    "primary":              "#007ACC",   # VSCode blue
+    "primary_dark":         "#005F9E",
+    "primary_glow":         "#1A3F5C",
+    "accent":               "#C586C0",   # VSCode purple
+    "accent_dark":          "#9A4090",
+    "accent_dim":           "#2D1F2D",
+    "secondary":            "#858585",
 
     # ── Status ─────────────────────────────────────────────────────────────────
-    "success":          "#2EA043",   # GitHub-green — pass, hired, high score
-    "success_dark":     "#238636",   # Pressed/hover success state
-    "success_dim":      "#1A3A28",   # Dim success background
-    "warning":          "#D29922",   # Amber — partial match, caution
-    "warning_dim":      "#3A2E10",   # Dim warning background
-    "error":            "#F85149",   # Red — fail, rejected, error
-    "error_dim":        "#3A1A1A",   # Dim error background
-    "info":             "#58A6FF",   # Info blue
+    "success":              "#4EC9B0",   # VSCode teal
+    "success_dark":         "#3AA890",
+    "success_dim":          "#1A3028",
+    "warning":              "#CCA700",
+    "warning_dim":          "#2D2800",
+    "error":                "#F14C4C",
+    "error_dim":            "#3D1010",
+    "info":                 "#9CDCFE",   # VSCode light-blue
 
-    # ── Surface elevation (L0 → L3) ───────────────────────────────────────────
-    # L0: absolute base (window / wallpaper)
-    "background":       "#080C14",
-    # L1: default panel / card surface
-    "surface":          "#0D1117",
-    # L2: elevated — hover backgrounds, active rows, inner panels
-    "surface_elevated": "#161B22",
-    # L3: overlay — dropdowns, tooltips, modals, active sidebar item
-    "surface_overlay":  "#1C2333",
+    # ── Surfaces (L0 → L3) — VSCode elevation model ───────────────────────────
+    "background":           "#1E1E1E",   # Editor / main content
+    "surface":              "#252526",   # Sidebar / panel
+    "surface_elevated":     "#2D2D30",   # Input, tab bar, card bg
+    "surface_overlay":      "#3C3C3C",   # Hover, dropdown, overlay
 
     # ── Borders ────────────────────────────────────────────────────────────────
-    "border_subtle":    "#21262D",   # Near-invisible divider
-    "border_muted":     "#30363D",   # Visible border
+    "border_subtle":        "#474747",
+    "border_muted":         "#5A5A5A",
 
     # ── Typography ─────────────────────────────────────────────────────────────
-    "text_primary":     "#E6EDF3",   # Off-white body/heading text
-    "text_secondary":   "#8B949E",   # Muted labels, hints
-    "text_tertiary":    "#484F58",   # Ghost text, disabled, version labels
-    "text_on_primary":  "#FFFFFF",   # Text on filled primary buttons
+    "text_primary":         "#D4D4D4",   # VSCode editor foreground
+    "text_secondary":       "#858585",
+    "text_tertiary":        "#4A4A4A",
+    "text_on_primary":      "#FFFFFF",
+
+    # ── VSCode chrome tokens ───────────────────────────────────────────────────
+    "statusbar_bg":         "#007ACC",
+    "statusbar_fg":         "#FFFFFF",
+    "activitybar_bg":       "#333333",
+    "activitybar_active":   "#FFFFFF",
+    "activitybar_inactive": "#858585",
 }
 
 # ── Shadow definitions ─────────────────────────────────────────────────────────

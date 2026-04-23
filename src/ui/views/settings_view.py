@@ -55,34 +55,44 @@ class SettingsView(BaseView):
         self._setup_settings_view()
         self._load_current_settings()
 
-    def _setup_settings_view(self):
-        """Set up the settings view content."""
-        # Create tab widget
-        tabs = QTabWidget()
-        tabs.setStyleSheet(f"""
+    def _tab_widget_qss(self) -> str:
+        return f"""
             QTabWidget::pane {{
                 border: 1px solid {COLORS['border_subtle']};
-                border-radius: 8px;
                 background-color: {COLORS['surface']};
-                padding: 16px;
+                padding: 14px;
             }}
             QTabBar::tab {{
                 background-color: {COLORS['surface_elevated']};
                 color: {COLORS['text_secondary']};
-                padding: 10px 20px;
-                margin-right: 4px;
-                border-top-left-radius: 6px;
-                border-top-right-radius: 6px;
+                padding: 7px 16px;
+                border: 1px solid {COLORS['border_subtle']};
+                border-bottom: none;
+                margin-right: 1px;
             }}
             QTabBar::tab:selected {{
                 background-color: {COLORS['surface']};
                 color: {COLORS['primary']};
                 font-weight: 500;
+                border-bottom: 2px solid {COLORS['primary']};
             }}
-            QTabBar::tab:hover {{
+            QTabBar::tab:hover:!selected {{
                 background-color: {COLORS['surface_overlay']};
+                color: {COLORS['text_primary']};
             }}
-        """)
+        """
+
+    def refresh_styles(self) -> None:
+        """Re-apply inline styles after theme change."""
+        super().refresh_styles()
+        if hasattr(self, "_tabs"):
+            self._tabs.setStyleSheet(self._tab_widget_qss())
+
+    def _setup_settings_view(self):
+        """Set up the settings view content."""
+        tabs = QTabWidget()
+        self._tabs = tabs
+        tabs.setStyleSheet(self._tab_widget_qss())
 
         # General settings tab
         general_tab = self._create_general_tab()

@@ -10,7 +10,7 @@ from PyQt6.QtGui import QFont
 from src.utils.constants import COLORS
 from src.utils.logger import get_logger
 from src.ui.views.base_view import BaseView
-from src.ui.widgets import StatCard, InfoCard, CandidateCard, PrimaryButton
+from src.ui.widgets import StatCard, InfoCard, CandidateCard, PrimaryButton, SuccessButton, SecondaryButton
 
 logger = get_logger(__name__)
 
@@ -130,44 +130,14 @@ class DashboardView(BaseView):
         actions_card.add_content(create_job_btn)
 
         # Import resumes button -> navigate to Candidates (index 1)
-        import_btn = PrimaryButton("Import Resumes")
+        import_btn = SuccessButton("Import Resumes")
         import_btn.setMinimumHeight(44)
-        import_btn.setStyleSheet(
-            f"""
-            QPushButton {{
-                background-color: {COLORS['success']};
-                color: white;
-                border: none;
-                border-radius: 6px;
-                padding: 8px 16px;
-                font-weight: 500;
-            }}
-            QPushButton:hover {{
-                background-color: {COLORS['success_dark']};
-            }}
-        """
-        )
         import_btn.clicked.connect(lambda: self.navigate_to_view.emit(1))
         actions_card.add_content(import_btn)
 
         # Run matching button -> navigate to Matching (index 3)
-        match_btn = PrimaryButton("Run AI Matching")
+        match_btn = SecondaryButton("Run AI Matching")
         match_btn.setMinimumHeight(44)
-        match_btn.setStyleSheet(
-            f"""
-            QPushButton {{
-                background-color: {COLORS['accent']};
-                color: white;
-                border: none;
-                border-radius: 6px;
-                padding: 8px 16px;
-                font-weight: 500;
-            }}
-            QPushButton:hover {{
-                background-color: {COLORS['accent_dark']};
-            }}
-        """
-        )
         match_btn.clicked.connect(lambda: self.navigate_to_view.emit(3))
         actions_card.add_content(match_btn)
 
@@ -281,6 +251,12 @@ class DashboardView(BaseView):
         self.top_candidates_layout.addWidget(placeholder)
 
         parent_layout.addWidget(self.top_candidates_container)
+
+    def refresh_styles(self) -> None:
+        self.jobs_card.refresh_styles()
+        self.candidates_card.refresh_styles()
+        self.matches_card.refresh_styles()
+        self.interviews_card.refresh_styles()
 
     def refresh(self):
         """Refresh dashboard data from MongoDB."""

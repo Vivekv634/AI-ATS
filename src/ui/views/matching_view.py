@@ -469,7 +469,7 @@ class MatchingView(BaseView):
                 background-color: {COLORS['surface_elevated']};
                 color: {COLORS['text_primary']};
                 border: 1px solid {COLORS['border_muted']};
-                border-radius: 6px;
+                border-radius: 2px;
                 padding: 8px 12px;
             }}
             QComboBox:focus {{
@@ -651,7 +651,7 @@ class MatchingView(BaseView):
                 background-color: {COLORS['surface_elevated']};
                 color: {COLORS['text_primary']};
                 border: 1px solid {COLORS['border_subtle']};
-                border-radius: 8px;
+                border-radius: 4px;
                 padding: 12px;
                 font-size: 13px;
                 line-height: 1.5;
@@ -894,7 +894,7 @@ class MatchingView(BaseView):
                 background-color: {COLORS['warning']}22;
                 color: {COLORS['warning']};
                 padding: 12px;
-                border-radius: 6px;
+                border-radius: 2px;
                 font-size: 13px;
             """
             )
@@ -905,10 +905,47 @@ class MatchingView(BaseView):
                 background-color: {COLORS['success']}22;
                 color: {COLORS['success']};
                 padding: 12px;
-                border-radius: 6px;
+                border-radius: 2px;
                 font-size: 13px;
             """
             )
+
+    def refresh_styles(self) -> None:
+        self.job_combo.setStyleSheet(f"""
+            QComboBox {{
+                background-color: {COLORS['surface_elevated']};
+                color: {COLORS['text_primary']};
+                border: 1px solid {COLORS['border_muted']};
+                border-radius: 2px;
+                padding: 8px 12px;
+            }}
+            QComboBox:focus {{
+                border-color: {COLORS['primary']};
+            }}
+            QComboBox::drop-down {{ border: none; padding-right: 8px; }}
+        """)
+        self.progress_bar.setStyleSheet(f"""
+            QProgressBar {{
+                background-color: {COLORS['surface_overlay']};
+                border: none;
+                border-radius: 4px;
+            }}
+            QProgressBar::chunk {{
+                background-color: {COLORS['primary']};
+                border-radius: 4px;
+            }}
+        """)
+        self.explanation_text.setStyleSheet(f"""
+            QTextEdit {{
+                background-color: {COLORS['surface_elevated']};
+                color: {COLORS['text_primary']};
+                border: 1px solid {COLORS['border_subtle']};
+                border-radius: 4px;
+                padding: 12px;
+                font-size: 13px;
+            }}
+        """)
+        self.results_table.refresh_styles()
 
     def refresh(self):
         """Refresh the matching view by reloading jobs."""
