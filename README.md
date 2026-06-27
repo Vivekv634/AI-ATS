@@ -188,14 +188,3 @@ mypy src/
 ## License
 
 Proprietary - All Rights Reserved
-
-## Author
-
-**Vivek Vaish**
-
-- B.Tech Final Year Project
-- Galgotias University
-
----
-
-_This project is developed as a patent-level capstone project demonstrating AI-powered recruitment technology with ethical considerations._
